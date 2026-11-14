@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <!-- Favicon & Touch Icons -->
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
+  <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>PrintPulse &bull; Instant Cloud Print</title>
+  
+  <!-- Tailwind CSS Engine -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Vector Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- PDF.js client-side parser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+
+  <!-- Client-side UPI QR generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- External Design System Styles -->
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#FAF5FF',
+              100: '#F3E8FF',
+              200: '#E9D5FF',
+              300: '#D8B4FE',
+              400: '#C4B5FD',
+              500: '#A78BFA',
+              600: '#7C3AED',
+              700: '#6D28D9',
+              800: '#5B21B6',
+              900: '#4C1D95',
+            }
+          },
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="min-h-screen w-full flex flex-col justify-between p-4 sm:p-6 antialiased selection:bg-[#7C3AED] selection:text-white">
+
+  <!-- Ambient Animated Purple Mesh Orbs -->
+  <div class="ambient-orb ambient-orb-1"></div>
+  <div class="ambient-orb ambient-orb-2"></div>
+
+  <!-- Native Mobile-First Full-Bleed Content Container -->
+  <main class="w-full max-w-xl mx-auto flex flex-col gap-5 flex-1 relative z-10">
+
+    <!-- Top Navigation Header -->
+    <header class="w-full flex items-center justify-between anim-stagger delay-0">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-[#7C3AED] to-[#6D28D9] text-white shadow-lg shadow-purple-500/25 flex-shrink-0">
+          <i data-lucide="printer" class="w-6 h-6 stroke-[2.2]"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-extrabold tracking-tight flex items-center gap-2 leading-none">
+            PrintPulse
+            <span class="text-[10px] px-2.5 py-0.5 rounded-full bg-brand-600/10 text-brand-600 dark:bg-brand-400/15 dark:text-brand-300 font-mono tracking-wider font-bold border border-brand-500/20">DIRECT</span>
+          </h1>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1 flex items-center gap-1.5">
+            <i data-lucide="store" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i>
+            Kiosk: <span class="font-bold uppercase tracking-wider font-mono text-brand-700 dark:text-brand-300">{{ vendor_id }}</span>
+          </p>
+        </div>
+      </div>
+      
+      <!-- Live Status Pill -->
+      <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full liquid-glass-pill text-xs font-semibold">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)] animate-pulse"></span>
+        <span class="text-gray-700 dark:text-gray-200">Linked</span>
+      </div>
+    </header>
+
+    <!-- Upload Canvas / Interactive Dropzone -->
+    <section class="w-full anim-stagger delay-1">
+      <label id="dropZone" for="fileInput" class="liquid-dropzone group relative flex flex-col items-center justify-center w-full min-h-[155px] p-6 cursor-pointer">
+        <input id="fileInput" type="file" multiple accept=".pdf,image/jpeg,image/png" class="hidden" />
+
+        <div class="flex flex-col items-center text-center select-none">
+          <div class="w-14 h-14 rounded-full bg-gradient-to-tr from-brand-600/15 to-brand-400/25 border border-brand-500/30 flex items-center justify-center text-brand-600 dark:text-brand-400 group-hover:scale-110 group-hover:bg-brand-600 group-hover:text-white transition-all duration-300 shadow-sm">
+            <i data-lucide="cloud-upload" class="w-7 h-7 stroke-[2]"></i>
+          </div>
+          <p class="text-base font-bold mt-3 group-hover:text-brand-600 dark:group-hover:text-brand-300 transition-colors">Tap or Drop Files to Print</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 font-medium">Select multiple PDFs or High-Res Images</p>
+        </div>
+      </label>
+    </section>
+
+    <!-- Selected Documents Queue -->
+    <section class="w-full flex flex-col gap-3 anim-stagger delay-2">
+      <div class="flex items-center justify-between px-1">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Print Queue</span>
+          <span id="queueBadge" class="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-brand-600/10 text-brand-600 dark:bg-brand-400/15 dark:text-brand-300 font-bold border border-brand-500/20">0 items</span>
+        </div>
+        <button id="clearAllBtn" type="button" class="text-xs text-rose-500 hover:text-rose-600 font-semibold hidden transition-colors">Clear All</button>
+      </div>
+
+      <!-- Empty State -->
+      <div id="queueEmpty" class="text-center py-10 liquid-glass flex flex-col items-center justify-center gap-2">
+        <div class="w-12 h-12 rounded-full bg-brand-500/10 flex items-center justify-center text-brand-500 mb-1">
+          <i data-lucide="inbox" class="w-6 h-6 stroke-[1.8]"></i>
+        </div>
+        <p class="text-sm font-semibold">No documents queued yet</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">Upload a PDF or image above to configure print settings</p>
+      </div>
+
+      <!-- Natural Document Cards List -->
+      <div id="documentsList" class="flex flex-col gap-3">
+        <!-- Rendered Dynamically -->
+      </div>
+    </section>
+
+    <!-- Dynamic Total Checkout Receipt -->
+    <section class="w-full liquid-glass p-5 flex items-center justify-between anim-stagger delay-3">
+      <div>
+        <p class="text-[10px] font-mono uppercase tracking-wider text-gray-500 dark:text-gray-400">Total Calculation</p>
+        <p id="calcFormula" class="text-xs font-semibold text-gray-700 dark:text-gray-300 mt-0.5">0 pages across 0 files</p>
+      </div>
+      <div class="text-right">
+        <p class="text-[10px] text-gray-500 dark:text-gray-400 font-medium">Payable Amount</p>
+        <p id="totalPrice" class="text-3xl font-black font-mono text-[#7C3AED] dark:text-[#A78BFA] tracking-tight">₹0.00</p>
+      </div>
+    </section>
+
+    <!-- Actions Area: Preview Entire Print Job & Proceed to UPI -->
+    <div class="flex flex-col gap-2.5 anim-stagger delay-4">
+      <button
+        id="previewAllBtn"
+        type="button"
+        disabled
+        onclick="openExactBatchPdfPreview()"
+        class="w-full py-3 px-5 rounded-full border border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] font-bold text-sm tracking-wide flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none active:scale-[0.98]"
+      >
+        <i data-lucide="eye" class="w-4 h-4 stroke-[2]"></i>
+        <span>Inspect Compiled Print Sheets (A4 PDF)</span>
+      </button>
+
+      <!-- Main Vibrant Purple CTA Pill Button -->
+      <button
+        id="payButton"
+        type="button"
+        disabled
+        class="w-full py-4 px-6 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] hover:from-[#6D28D9] hover:to-[#5B21B6] text-white font-bold text-base tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+      >
+        <i data-lucide="shield-check" class="w-5 h-5 stroke-[2.2]"></i>
+        <span id="payButtonText">Proceed to UPI Payment</span>
+      </button>
+    </div>
+
+    <!-- Dynamic UPI Checkout Card (Shown After Order Staging) -->
+    <section id="upiCheckoutSection" class="hidden w-full liquid-glass p-6 flex flex-col items-center text-center gap-4 border border-brand-500/25">
+      <!-- Pending State -->
+      <div id="upiPendingView" class="w-full flex flex-col items-center gap-4">
+        <div class="w-full flex items-center justify-between border-b border-brand-500/15 pb-3">
+          <div class="text-left">
+            <span id="checkoutOrderIdBadge" class="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full bg-brand-600/10 text-brand-700 dark:text-brand-300 border border-brand-500/20">ORD-000000</span>
+            <p id="checkoutSummaryMeta" class="text-xs text-gray-500 dark:text-gray-400 mt-1.5 font-medium"></p>
+          </div>
+          <div class="text-right">
+            <p class="text-[10px] uppercase font-mono tracking-wider text-gray-500 dark:text-gray-400">Amount Due</p>
+            <p id="checkoutAmount" class="text-2xl font-black font-mono text-[#7C3AED] dark:text-[#A78BFA]">₹0.00</p>
+          </div>
+        </div>
+
+        <!-- Centered Dynamic UPI QR for Desktop & Cross-Device Scan -->
+        <div class="flex flex-col items-center gap-2 py-2">
+          <div class="p-4 bg-white rounded-3xl shadow-md border border-purple-200/80 flex items-center justify-center">
+            <div id="upiQrCanvas" class="w-[200px] h-[200px] flex items-center justify-center"></div>
+          </div>
+          <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mt-1">Scan with GPay, PhonePe, Paytm or BHIM</p>
+          <p id="checkoutVpaLabel" class="text-[11px] font-mono text-gray-500 dark:text-gray-400"></p>
+        </div>
+
+        <!-- Primary Mobile Intent Action -->
+        <a
+          id="upiIntentBtn"
+          href="#"
+          class="w-full py-4 px-6 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] hover:from-[#6D28D9] hover:to-[#5B21B6] text-white font-bold text-base tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-all"
+        >
+          <i data-lucide="smartphone" class="w-5 h-5 stroke-[2.2]"></i>
+          <span>Pay via UPI App</span>
+        </a>
+
+        <!-- Live Waiting Indicator -->
+        <div class="flex items-center justify-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-4 py-2 rounded-full border border-amber-500/20">
+          <span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+          <span>Waiting for payment confirmation...</span>
+        </div>
+
+        <!-- Auxiliary Controls -->
+        <div class="w-full flex items-center justify-between gap-3 pt-2 border-t border-brand-500/15">
+          <button
+            id="cancelCheckoutBtn"
+            type="button"
+            class="flex-1 py-2.5 px-4 rounded-full text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/15 transition-colors"
+          >
+            Cancel Order
+          </button>
+          <button
+            id="simulatePayBtn"
+            type="button"
+            class="flex-1 py-2.5 px-4 rounded-full text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 transition-colors"
+          >
+            Simulate Test Payment
+          </button>
+        </div>
+      </div>
+
+      <!-- Confirmed Paid & Live Order Status Tracker (Phase 6 Part 1) -->
+      <div id="upiSuccessView" class="hidden w-full flex flex-col gap-4 py-2">
+        <!-- Tracker Header -->
+        <div class="flex items-center justify-between pb-3 border-b border-brand-500/15">
+          <div class="flex items-center gap-2.5">
+            <div id="trackerHeaderIcon" class="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-500 flex-shrink-0">
+              <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span id="paidOrderBadge" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25"></span>
+                <span id="paidAmountBadge" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-brand-600/10 text-brand-700 dark:text-brand-300 border border-brand-500/20"></span>
+              </div>
+              <p id="trackerHeaderSubtitle" class="text-[11px] text-gray-500 dark:text-gray-400 font-medium mt-0.5">Live Order Tracker</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Live Sync</span>
+          </div>
+        </div>
+
+        <!-- 3-Step Live Progress Indicator -->
+        <div class="w-full flex flex-col gap-0 px-2 py-1">
+          <!-- Step 1: Paid & Queued -->
+          <div class="flex items-start gap-3.5 relative">
+            <div class="flex flex-col items-center">
+              <div id="step1Indicator" class="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300">
+                <i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>
+              </div>
+              <div id="stepLine1" class="w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500"></div>
+            </div>
+            <div class="pt-1.5">
+              <h4 id="step1Title" class="text-sm font-extrabold text-gray-900 dark:text-white leading-none">Paid & Queued</h4>
+              <p id="step1Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Payment confirmed. Order in counter queue.</p>
+            </div>
+          </div>
+
+          <!-- Step 2: Printing at Counter -->
+          <div class="flex items-start gap-3.5 relative">
+            <div class="flex flex-col items-center">
+              <div id="step2Indicator" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300">
+                <i data-lucide="printer" class="w-4 h-4"></i>
+              </div>
+              <div id="stepLine2" class="w-0.5 h-10 bg-gray-200 dark:bg-white/10 my-1 transition-all duration-500"></div>
+            </div>
+            <div class="pt-1.5">
+              <h4 id="step2Title" class="text-sm font-bold text-gray-700 dark:text-gray-300 leading-none">Printing at Counter</h4>
+              <p id="step2Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Waiting for shopkeeper to tap Print...</p>
+            </div>
+          </div>
+
+          <!-- Step 3: Ready for Pickup -->
+          <div class="flex items-start gap-3.5 relative">
+            <div class="flex flex-col items-center">
+              <div id="step3Indicator" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300">
+                <i data-lucide="package-check" class="w-4 h-4"></i>
+              </div>
+            </div>
+            <div class="pt-1.5">
+              <h4 id="step3Title" class="text-sm font-bold text-gray-700 dark:text-gray-300 leading-none">Ready for Pickup</h4>
+              <p id="step3Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Collect sheets once printing finishes.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dynamic Status Callout Banner -->
+        <div id="statusCalloutBox" class="w-full transition-all"></div>
+
+        <button
+          id="newOrderBtn"
+          type="button"
+          class="mt-2 w-full py-3 px-6 rounded-full bg-gradient-to-r from-brand-600 to-brand-700 hover:from-brand-700 hover:to-brand-800 text-white font-bold text-xs sm:text-sm tracking-wide shadow-md shadow-purple-500/25 transition-all active:scale-[0.98]"
+        >
+          Print Another Document
+        </button>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="w-full text-center pt-2 pb-4 anim-stagger delay-4">
+      <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center justify-center gap-1.5 font-medium">
+        <i data-lucide="lock" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i>
+        PrintPulse &bull; Made with 💜 by <a href="https://abhayv175.netlify.app" target="_blank" class="text-[#7C3AED] dark:text-[#A78BFA] font-semibold hover:underline">Abhay Verma</a>
+      </p>
+    </footer>
+
+    <!-- Exact Print PDF Inspection Modal -->
+    <div id="pdfPreviewModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-md transition-all">
+      <div class="w-full max-w-2xl bg-white dark:bg-[#1E1735] rounded-3xl shadow-2xl border border-brand-500/30 flex flex-col overflow-hidden max-h-[92vh]">
+        <!-- Header -->
+        <div class="flex items-center justify-between px-5 py-3.5 border-b border-brand-500/15">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-xl bg-brand-600/15 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center flex-shrink-0">
+              <i data-lucide="file-check-2" class="w-4 h-4"></i>
+            </div>
+            <div class="min-w-0">
+              <h3 class="text-sm font-bold text-gray-900 dark:text-white truncate">Exact Print PDF Preview</h3>
+              <p id="modalDocTitle" class="text-[11px] text-gray-500 dark:text-gray-400 font-medium truncate"></p>
+            </div>
+          </div>
+          <button type="button" onclick="closeExactPdfPreview()" class="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- PDF Canvas / iFrame Viewport -->
+        <div class="flex-1 bg-gray-100 dark:bg-black/30 p-2 sm:p-4 flex items-center justify-center min-h-[380px] sm:min-h-[500px] overflow-hidden relative">
+          <div id="modalLoadingSpinner" class="flex flex-col items-center gap-2 text-brand-600 dark:text-brand-400">
+            <i data-lucide="loader" class="w-7 h-7 animate-spin"></i>
+            <span class="text-xs font-semibold">Generating exact A4 print stream...</span>
+          </div>
+          <iframe id="pdfPreviewIframe" class="w-full h-full min-h-[380px] sm:min-h-[500px] rounded-xl border border-black/10 dark:border-white/10 hidden bg-white"></iframe>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-5 py-3 border-t border-brand-500/15 flex items-center justify-between bg-black/5 dark:bg-white/5">
+          <div class="flex items-center gap-2">
+            <span class="text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1 font-medium">
+              <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-500"></i>
+              100% printer output parity
+            </span>
+            <a id="modalExternalLink" href="#" target="_blank" class="hidden text-[11px] font-semibold text-[#7C3AED] dark:text-[#A78BFA] hover:underline sm:inline">
+              Open in new tab &rarr;
+            </a>
+          </div>
+          <button type="button" onclick="closeExactPdfPreview()" class="py-1.5 px-4 rounded-full bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-xs shadow-md transition-all active:scale-95">
+            Close Preview
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    // Document Queue State
+    let queue = [];
+    const rates = {
+      bw: Number({{ bw_price | default(2.0) }}),
+      color: Number({{ color_price | default(10.0) }})
+    };
+
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const queueBadge = document.getElementById('queueBadge');
+    const queueEmpty = document.getElementById('queueEmpty');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+    const documentsList = document.getElementById('documentsList');
+    const calcFormula = document.getElementById('calcFormula');
+    const totalPrice = document.getElementById('totalPrice');
+    const payButton = document.getElementById('payButton');
+    const payButtonText = document.getElementById('payButtonText');
+    const previewAllBtn = document.getElementById('previewAllBtn');
+
+    function formatBytes(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Drag-and-drop listener styling with liquid purple highlights
+    ['dragenter', 'dragover'].forEach(name => {
+      dropZone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(name => {
+      dropZone.addEventListener(name, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+      });
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        handleIncomingFiles(e.dataTransfer.files);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        handleIncomingFiles(e.target.files);
+      }
+    });
+
+    async function handleIncomingFiles(fileList) {
+      for (const file of Array.from(fileList)) {
+        const item = {
+          uid: Math.random().toString(36).substring(2, 9),
+          file: file,
+          name: file.name,
+          size: file.size,
+          pageCount: 1,
+          copies: 1,
+          pageRange: 'all',
+          isColor: false,
+          orientation: 'portrait',
+          previewUrl: '',
+          isScanning: true
+        };
+
+        queue.push(item);
+        renderQueue();
+
+        // Calculate pages in background via PDF.js or determine aspect ratio for images
+        if (file.type === 'application/pdf') {
+          try {
+            const buffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+            item.pageCount = pdf.numPages;
+
+            // Render Page 1 to high-res thumbnail for instant A4 sheet mockup
+            const page = await pdf.getPage(1);
+            const viewport = page.getViewport({ scale: 1.5 });
+            if (viewport.width > viewport.height) {
+              item.orientation = 'landscape';
+            }
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = viewport.width;
+            offCanvas.height = viewport.height;
+            const ctx = offCanvas.getContext('2d');
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            item.previewUrl = offCanvas.toDataURL('image/png');
+          } catch (err) {
+            console.error("PDF parse failed, fallback to 1 page", err);
+            item.pageCount = 1;
+            item.previewUrl = '';
+          }
+        } else if (file.type.startsWith('image/')) {
+          item.pageCount = 1;
+          item.previewUrl = URL.createObjectURL(file);
+          try {
+            await new Promise((resolve) => {
+              const img = new Image();
+              img.onload = () => {
+                item.orientation = img.naturalWidth > img.naturalHeight ? 'landscape' : 'portrait';
+                resolve();
+              };
+              img.onerror = () => {
+                item.orientation = 'portrait';
+                resolve();
+              };
+              img.src = item.previewUrl;
+            });
+          } catch (_) {
+            item.orientation = 'portrait';
+          }
+        } else {
+          item.pageCount = 1;
+        }
+
+        item.isScanning = false;
+        renderQueue();
+      }
+      fileInput.value = '';
+    }
+
+    function renderQueue() {
+      queueBadge.textContent = `${queue.length} ${queue.length === 1 ? 'item' : 'items'}`;
+
+      if (queue.length === 0) {
+        queueEmpty.classList.remove('hidden');
+        clearAllBtn.classList.add('hidden');
+        documentsList.innerHTML = '';
+        calcFormula.textContent = '0 pages across 0 files';
+        totalPrice.textContent = '₹0.00';
+        payButton.disabled = true;
+        if (previewAllBtn) previewAllBtn.disabled = true;
+        return;
+      }
+
+      queueEmpty.classList.add('hidden');
+      clearAllBtn.classList.remove('hidden');
+      documentsList.innerHTML = '';
+
+      let grandTotal = 0;
+      let totalPages = 0;
+
+      queue.forEach((item, index) => {
+        const rate = item.isColor ? rates.color : rates.bw;
+        const itemTotal = item.pageCount * item.copies * rate;
+        grandTotal += itemTotal;
+        totalPages += (item.pageCount * item.copies);
+
+        const card = document.createElement('div');
+        card.className = "w-full liquid-glass p-4 flex flex-col gap-3 transition-all";
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600/15 to-brand-400/25 border border-brand-500/25 flex items-center justify-center text-[#7C3AED] dark:text-[#A78BFA] flex-shrink-0 shadow-sm">
+                <i data-lucide="${item.file.type === 'application/pdf' ? 'file-text' : 'image'}" class="w-5 h-5 stroke-[1.8]"></i>
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold truncate max-w-[210px] sm:max-w-[320px]">${item.name}</p>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <span class="text-[9px] font-mono px-2 py-0.5 rounded-full bg-brand-600/10 text-brand-600 dark:bg-brand-400/15 dark:text-brand-300 font-bold border border-brand-500/20">
+                    ${item.isScanning ? 'SCANNING...' : `${item.pageCount} ${item.pageCount === 1 ? 'PAGE' : 'PAGES'}`}
+                  </span>
+                  <span class="text-[10px] text-gray-500 dark:text-gray-400 font-medium">${formatBytes(item.size)}</span>
+                </div>
+              </div>
+            </div>
+
+            <button type="button" onclick="removeItem('${item.uid}')" class="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors" title="Remove document">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <!-- Print Controls Bar -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-brand-500/15">
+            <!-- Mode Toggle Pill -->
+            <div class="flex gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-full border border-brand-500/20">
+              <button type="button" onclick="setMode('${item.uid}', false)" class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${!item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+                B&W <span class="font-mono text-[9px]">₹${rates.bw}</span>
+              </button>
+              <button type="button" onclick="setMode('${item.uid}', true)" class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+                Color <span class="font-mono text-[9px]">₹${rates.color}</span>
+              </button>
+            </div>
+
+            <!-- Orientation Toggle Pill -->
+            <div class="flex gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-full border border-brand-500/20">
+              <button type="button" onclick="setOrientation('${item.uid}', 'portrait')" class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${item.orientation !== 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+                Portrait
+              </button>
+              <button type="button" onclick="setOrientation('${item.uid}', 'landscape')" class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${item.orientation === 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+                Landscape
+              </button>
+            </div>
+
+            <!-- Page Range Pill -->
+            <div class="flex items-center gap-1.5 bg-black/5 dark:bg-white/5 px-2.5 py-1 rounded-full border border-brand-500/20">
+              <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400">Pages:</span>
+              <input type="text" value="${item.pageRange || 'all'}" onchange="updatePageRange('${item.uid}', this.value)" class="w-16 bg-transparent text-[10px] font-mono font-bold text-center outline-none text-[#7C3AED] dark:text-[#A78BFA] placeholder-gray-400" placeholder="all, 1-3" title="e.g. all, 1-3, 2">
+            </div>
+
+            <!-- Copies & Item Total -->
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-full border border-brand-500/20">
+                <button type="button" onclick="updateCopies('${item.uid}', -1)" class="w-6 h-6 rounded-full bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center text-xs font-mono font-bold transition-all active:scale-90">-</button>
+                <span class="w-5 text-center font-mono font-bold text-xs">${item.copies}</span>
+                <button type="button" onclick="updateCopies('${item.uid}', 1)" class="w-6 h-6 rounded-full bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center text-xs font-mono font-bold transition-all active:scale-90">+</button>
+              </div>
+
+              <div class="text-right min-w-[50px]">
+                <span class="font-mono font-bold text-xs text-[#7C3AED] dark:text-[#A78BFA]">₹${itemTotal.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live A4 Print Sheet Preview Mockup -->
+          <div class="pt-3 border-t border-brand-500/15 flex flex-col items-center gap-2.5">
+            <div class="w-full flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-400">
+              <span class="flex items-center gap-1.5 font-bold tracking-wide uppercase text-[10px] text-brand-700 dark:text-brand-300">
+                <i data-lucide="layout" class="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]"></i>
+                A4 Sheet Live Preview
+              </span>
+              <button 
+                type="button" 
+                onclick="openExactPdfPreview('${item.uid}')" 
+                class="px-2.5 py-1 rounded-full bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] text-[10.5px] font-bold flex items-center gap-1 transition-all active:scale-95"
+                title="Open exact compiled A4 PDF stream from backend"
+              >
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+                Verify Exact Print PDF
+              </button>
+            </div>
+
+            <!-- The Realistic White A4 Sheet with 20pt / 3.4% margins -->
+            <div class="w-full flex justify-center py-2 px-1">
+              <div 
+                id="sheet-container-${item.uid}"
+                class="relative bg-white text-black shadow-xl shadow-purple-950/15 rounded-sm border border-gray-200/90 dark:border-white/10 transition-all duration-300 flex items-center justify-center overflow-hidden"
+                style="width: 100%; max-width: ${item.orientation === 'landscape' ? '340px' : '230px'}; aspect-ratio: ${item.orientation === 'landscape' ? '297 / 210' : '210 / 297'}; padding: 3.4%;"
+              >
+                <!-- Printable Area boundary inside 20pt Margins -->
+                <div class="w-full h-full relative flex items-center justify-center border border-dashed border-gray-300/80 dark:border-gray-400/50 rounded-[2px] overflow-hidden bg-gray-50/50">
+                  ${item.previewUrl ? `
+                    <img 
+                      id="preview-img-${item.uid}"
+                      src="${item.previewUrl}"
+                      alt="A4 Print Sheet Preview"
+                      class="w-full h-full object-contain pointer-events-none select-none transition-all duration-200"
+                      style="filter: ${item.isColor ? 'none' : 'grayscale(100%) contrast(1.05)'};"
+                    />
+                  ` : `
+                    <div class="flex flex-col items-center justify-center gap-1.5 text-gray-400 p-4 text-center">
+                      <i data-lucide="loader" class="w-5 h-5 animate-spin text-[#7C3AED]"></i>
+                      <span class="text-[10px] font-medium font-mono">Rendering sheet...</span>
+                    </div>
+                  `}
+                </div>
+
+                <!-- Sheet Corner Watermark -->
+                <div class="absolute top-1 right-1.5 px-1.5 py-0.5 rounded text-[8px] font-mono font-bold uppercase tracking-wider bg-black/5 text-gray-400 pointer-events-none">
+                  A4 • 20pt margin
+                </div>
+              </div>
+            </div>
+
+            <!-- Meta badge under sheet -->
+            <div class="text-[11px] text-gray-500 dark:text-gray-400 font-medium text-center">
+              A4 <span class="font-bold text-brand-700 dark:text-brand-300">${item.orientation === 'landscape' ? 'Landscape' : 'Portrait'}</span> &bull; 
+              <span class="font-bold text-gray-700 dark:text-gray-200">${item.isColor ? 'Full Color' : 'Grayscale'}</span> &bull; 
+              ${item.pageCount} ${item.pageCount === 1 ? 'page' : 'pages'} &times; ${item.copies} ${item.copies === 1 ? 'copy' : 'copies'} = 
+              <span class="font-mono font-bold text-brand-700 dark:text-brand-300">${item.pageCount * item.copies} ${item.pageCount * item.copies === 1 ? 'sheet' : 'sheets'} total</span>
+            </div>
+          </div>
+        `;
+
+        documentsList.appendChild(card);
+      });
+
+      calcFormula.textContent = `${totalPages} total ${totalPages === 1 ? 'page' : 'pages'} across ${queue.length} ${queue.length === 1 ? 'document' : 'documents'}`;
+      totalPrice.textContent = `₹${grandTotal.toFixed(2)}`;
+      payButton.disabled = queue.some(i => i.isScanning);
+      if (previewAllBtn) previewAllBtn.disabled = queue.length === 0 || queue.some(i => i.isScanning);
+
+      lucide.createIcons();
+    }
+
+    window.removeItem = function(uid) {
+      const item = queue.find(i => i.uid === uid);
+      if (item && item.previewUrl && item.previewUrl.startsWith('blob:')) {
+        try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
+      }
+      queue = queue.filter(item => item.uid !== uid);
+      renderQueue();
+    };
+
+    window.setMode = function(uid, isColor) {
+      const item = queue.find(i => i.uid === uid);
+      if (item) {
+        item.isColor = isColor;
+        renderQueue();
+      }
+    };
+
+    window.setOrientation = function(uid, orientation) {
+      const item = queue.find(i => i.uid === uid);
+      if (item) {
+        item.orientation = orientation;
+        renderQueue();
+      }
+    };
+
+    window.openExactPdfPreview = async function(uid) {
+      const item = queue.find(i => i.uid === uid);
+      if (!item) return;
+
+      const modal = document.getElementById('pdfPreviewModal');
+      const spinner = document.getElementById('modalLoadingSpinner');
+      const iframe = document.getElementById('pdfPreviewIframe');
+      const title = document.getElementById('modalDocTitle');
+      const extLink = document.getElementById('modalExternalLink');
+
+      title.textContent = `${item.name} • A4 ${item.orientation === 'landscape' ? 'Landscape' : 'Portrait'} • ${item.isColor ? 'Color' : 'B&W'}`;
+      iframe.classList.add('hidden');
+      iframe.src = 'about:blank';
+      extLink.classList.add('hidden');
+      spinner.classList.remove('hidden');
+      modal.classList.remove('hidden');
+      lucide.createIcons();
+
+      try {
+        const formData = new FormData();
+        formData.append('file', item.file);
+        formData.append('color_mode', item.isColor ? 'color' : 'bw');
+        formData.append('is_color', item.isColor);
+        formData.append('orientation', item.orientation || 'portrait');
+        formData.append('page_range', item.pageRange || 'all');
+
+        const res = await fetch('/api/documents/preview-pdf', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to render PDF preview');
+        }
+
+        const blob = await res.blob();
+        const pdfBlobUrl = URL.createObjectURL(blob);
+        iframe.src = pdfBlobUrl;
+        extLink.href = pdfBlobUrl;
+        extLink.classList.remove('hidden');
+        spinner.classList.add('hidden');
+        iframe.classList.remove('hidden');
+      } catch (err) {
+        alert(`Preview error: ${err.message}`);
+        closeExactPdfPreview();
+      }
+    };
+
+    window.openExactBatchPdfPreview = async function() {
+      if (queue.length === 0) return;
+
+      const modal = document.getElementById('pdfPreviewModal');
+      const spinner = document.getElementById('modalLoadingSpinner');
+      const iframe = document.getElementById('pdfPreviewIframe');
+      const title = document.getElementById('modalDocTitle');
+      const extLink = document.getElementById('modalExternalLink');
+
+      title.textContent = `All Queued Documents (${queue.length} ${queue.length === 1 ? 'file' : 'files'})`;
+      iframe.classList.add('hidden');
+      iframe.src = 'about:blank';
+      extLink.classList.add('hidden');
+      spinner.classList.remove('hidden');
+      modal.classList.remove('hidden');
+      lucide.createIcons();
+
+      try {
+        const formData = new FormData();
+        const itemsConfig = queue.map(item => ({
+          copies: 1,
+          is_color: item.isColor,
+          page_range: item.pageRange || 'all',
+          orientation: item.orientation || 'portrait'
+        }));
+        queue.forEach(item => {
+          formData.append('files', item.file);
+        });
+        formData.append('items_config', JSON.stringify(itemsConfig));
+        formData.append('orientation', queue[0]?.orientation || 'portrait');
+        formData.append('color_mode', queue.some(i => i.isColor) ? 'color' : 'bw');
+
+        const res = await fetch('/api/documents/preview-pdf', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to render batch PDF preview');
+        }
+
+        const blob = await res.blob();
+        const pdfBlobUrl = URL.createObjectURL(blob);
+        iframe.src = pdfBlobUrl;
+        extLink.href = pdfBlobUrl;
+        extLink.classList.remove('hidden');
+        spinner.classList.add('hidden');
+        iframe.classList.remove('hidden');
+      } catch (err) {
+        alert(`Preview error: ${err.message}`);
+        closeExactPdfPreview();
+      }
+    };
+
+    window.closeExactPdfPreview = function() {
+      const modal = document.getElementById('pdfPreviewModal');
+      const iframe = document.getElementById('pdfPreviewIframe');
+      const extLink = document.getElementById('modalExternalLink');
+      if (iframe.src && iframe.src.startsWith('blob:')) {
+        try { URL.revokeObjectURL(iframe.src); } catch (_) {}
+      }
+      iframe.src = 'about:blank';
+      extLink.href = '#';
+      modal.classList.add('hidden');
+    };
+
+    window.updateCopies = function(uid, delta) {
+      const item = queue.find(i => i.uid === uid);
+      if (item) {
+        item.copies = Math.max(1, Math.min(50, item.copies + delta));
+        renderQueue();
+      }
+    };
+
+    window.updatePageRange = function(uid, rangeVal) {
+      const item = queue.find(i => i.uid === uid);
+      if (item) {
+        item.pageRange = (rangeVal || 'all').trim();
+      }
+    };
+
+    clearAllBtn.addEventListener('click', () => {
+      queue.forEach(item => {
+        if (item.previewUrl && item.previewUrl.startsWith('blob:')) {
+          try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
+        }
+      });
+      queue = [];
+      renderQueue();
+    });
+
+    const upiCheckoutSection = document.getElementById('upiCheckoutSection');
+    const upiPendingView = document.getElementById('upiPendingView');
+    const upiSuccessView = document.getElementById('upiSuccessView');
+    const checkoutOrderIdBadge = document.getElementById('checkoutOrderIdBadge');
+    const checkoutSummaryMeta = document.getElementById('checkoutSummaryMeta');
+    const checkoutAmount = document.getElementById('checkoutAmount');
+    const upiQrCanvas = document.getElementById('upiQrCanvas');
+    const checkoutVpaLabel = document.getElementById('checkoutVpaLabel');
+    const upiIntentBtn = document.getElementById('upiIntentBtn');
+    const cancelCheckoutBtn = document.getElementById('cancelCheckoutBtn');
+    const simulatePayBtn = document.getElementById('simulatePayBtn');
+    const paidOrderBadge = document.getElementById('paidOrderBadge');
+    const paidAmountBadge = document.getElementById('paidAmountBadge');
+    const newOrderBtn = document.getElementById('newOrderBtn');
+
+    let activeOrderId = null;
+    let activeOrderAmount = 0;
+    let activeUpiUri = '';
+    let orderWs = null;
+    let pollTimer = null;
+    let currentOrderStatus = 'pending_payment';
+
+    function stopPaymentListeners() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (orderWs) {
+        try {
+          orderWs.close();
+        } catch (_) {}
+        orderWs = null;
+      }
+    }
+
+    function updateOrderStatusTracker(status, orderData) {
+      currentOrderStatus = (status || 'paid').toLowerCase();
+      const amount = Number(orderData?.amount ?? orderData?.total_amount ?? activeOrderAmount ?? 0);
+      const oid = orderData?.order_id || activeOrderId || '';
+
+      paidOrderBadge.textContent = oid;
+      paidAmountBadge.textContent = `PAID ₹${amount.toFixed(2)}`;
+
+      upiPendingView.classList.add('hidden');
+      upiSuccessView.classList.remove('hidden');
+
+      const step1Ind = document.getElementById('step1Indicator');
+      const step1Line = document.getElementById('stepLine1');
+      const step1Title = document.getElementById('step1Title');
+      const step1Desc = document.getElementById('step1Desc');
+
+      const step2Ind = document.getElementById('step2Indicator');
+      const step2Line = document.getElementById('stepLine2');
+      const step2Title = document.getElementById('step2Title');
+      const step2Desc = document.getElementById('step2Desc');
+
+      const step3Ind = document.getElementById('step3Indicator');
+      const step3Title = document.getElementById('step3Title');
+      const step3Desc = document.getElementById('step3Desc');
+
+      const callout = document.getElementById('statusCalloutBox');
+      const headerIcon = document.getElementById('trackerHeaderIcon');
+      const headerSub = document.getElementById('trackerHeaderSubtitle');
+
+      if (currentOrderStatus === 'paid') {
+        // Step 1: Completed
+        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
+        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
+        step1Line.className = "w-0.5 h-10 bg-brand-500/30 dark:bg-brand-400/20 my-1 transition-all duration-500";
+        step1Title.className = "text-sm font-extrabold text-emerald-600 dark:text-emerald-400 leading-none";
+        step1Desc.textContent = "Payment settled. Queued at counter.";
+
+        // Step 2: Queued / Next
+        step2Ind.className = "w-9 h-9 rounded-full bg-brand-500/15 border border-brand-500/30 text-brand-600 dark:text-brand-300 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
+        step2Ind.innerHTML = `<i data-lucide="printer" class="w-4 h-4"></i>`;
+        step2Line.className = "w-0.5 h-10 bg-gray-200 dark:bg-white/10 my-1 transition-all duration-500";
+        step2Title.className = "text-sm font-bold text-gray-800 dark:text-gray-200 leading-none";
+        step2Title.textContent = "Queued for Printing";
+        step2Desc.textContent = "Waiting for shopkeeper to tap Print...";
+
+        // Step 3: Pending
+        step3Ind.className = "w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
+        step3Ind.innerHTML = `<i data-lucide="package-check" class="w-4 h-4"></i>`;
+        step3Title.className = "text-sm font-bold text-gray-500 dark:text-gray-400 leading-none";
+        step3Title.textContent = "Ready for Pickup";
+        step3Desc.textContent = "Will be ready once spooling finishes.";
+
+        headerSub.textContent = "Step 1 of 3: Queued";
+        callout.innerHTML = `
+          <div class="w-full p-3.5 rounded-2xl bg-brand-500/10 border border-brand-500/25 flex items-center gap-3">
+            <div class="w-8 h-8 rounded-xl bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center flex-shrink-0">
+              <i data-lucide="clock" class="w-4 h-4"></i>
+            </div>
+            <div class="text-left">
+              <p class="text-xs font-bold text-gray-900 dark:text-white">Order Received at Counter</p>
+              <p class="text-[11px] text-gray-600 dark:text-gray-300">The operator's terminal has received your document.</p>
+            </div>
+          </div>
+        `;
+      } else if (currentOrderStatus === 'printing') {
+        // Step 1: Completed
+        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
+        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
+        step1Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
+        step1Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
+        step1Desc.textContent = "Payment confirmed.";
+
+        // Step 2: Active / Pulsing!
+        step2Ind.className = "w-9 h-9 rounded-full bg-gradient-to-tr from-brand-600 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-purple-500/35 flex-shrink-0 z-10 animate-pulse transition-all duration-300";
+        step2Ind.innerHTML = `<i data-lucide="printer" class="w-4 h-4 animate-bounce"></i>`;
+        step2Line.className = "w-0.5 h-10 bg-brand-500/40 my-1 transition-all duration-500";
+        step2Title.className = "text-sm font-extrabold text-[#7C3AED] dark:text-[#A78BFA] leading-none animate-pulse";
+        step2Title.textContent = "Printing at Counter";
+        step2Desc.textContent = "Documents are actively feeding into the printer tray...";
+
+        // Step 3: Pending
+        step3Ind.className = "w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
+        step3Ind.innerHTML = `<i data-lucide="package-check" class="w-4 h-4"></i>`;
+        step3Title.className = "text-sm font-bold text-gray-500 dark:text-gray-400 leading-none";
+        step3Title.textContent = "Ready for Pickup";
+        step3Desc.textContent = "Preparing for handoff...";
+
+        headerSub.textContent = "Step 2 of 3: Printing...";
+        callout.innerHTML = `
+          <div class="w-full p-3.5 rounded-2xl bg-gradient-to-r from-brand-500/15 to-purple-500/15 border border-brand-500/30 flex items-center gap-3 animate-pulse">
+            <div class="w-9 h-9 rounded-xl bg-[#7C3AED] text-white flex items-center justify-center flex-shrink-0 shadow-md">
+              <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+            </div>
+            <div class="text-left">
+              <p class="text-xs font-extrabold text-[#7C3AED] dark:text-[#C4B5FD]">Printing in Progress</p>
+              <p class="text-[11px] text-gray-600 dark:text-gray-300">Your pages are being processed at the shopkeeper's printer.</p>
+            </div>
+          </div>
+        `;
+      } else if (currentOrderStatus === 'completed') {
+        // Step 1: Completed
+        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
+        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
+        step1Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
+        step1Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
+        step1Desc.textContent = "Payment settled.";
+
+        // Step 2: Completed
+        step2Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
+        step2Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
+        step2Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
+        step2Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
+        step2Title.textContent = "Printed Successfully";
+        step2Desc.textContent = "All pages finished printing.";
+
+        // Step 3: Completed / Ready!
+        step3Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/40 ring-4 ring-emerald-500/20 flex-shrink-0 z-10 transition-all duration-300";
+        step3Ind.innerHTML = `<i data-lucide="sparkles" class="w-4 h-4"></i>`;
+        step3Title.className = "text-sm font-extrabold text-emerald-600 dark:text-emerald-400 leading-none";
+        step3Title.textContent = "Ready for Pickup!";
+        step3Desc.textContent = "Collect your print from the counter.";
+
+        headerSub.textContent = "Step 3 of 3: Ready for Pickup";
+        headerIcon.className = "w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/30 flex-shrink-0";
+        headerIcon.innerHTML = `<i data-lucide="sparkles" class="w-5 h-5"></i>`;
+
+        callout.innerHTML = `
+          <div class="w-full p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-3.5 shadow-lg shadow-emerald-500/10">
+            <div class="w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center flex-shrink-0 shadow-md">
+              <i data-lucide="package-check" class="w-5 h-5"></i>
+            </div>
+            <div class="text-left">
+              <p class="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Ready for Pickup!</p>
+              <p class="text-xs text-emerald-800/80 dark:text-emerald-200/80">Please collect your documents from the counter. Thank you!</p>
+            </div>
+          </div>
+        `;
+      }
+      lucide.createIcons();
+    }
+
+    function showPaidSuccessState(orderData) {
+      updateOrderStatusTracker('paid', orderData);
+    }
+
+    function startPaymentListeners(orderId) {
+      stopPaymentListeners();
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProto}//${window.location.host}/ws/orders/${encodeURIComponent(orderId)}`;
+      try {
+        orderWs = new WebSocket(wsUrl);
+        orderWs.onmessage = (evt) => {
+          try {
+            const msg = JSON.parse(evt.data);
+            const status = (msg.status || msg.order?.status || (msg.event === 'order_paid' ? 'paid' : '')).toLowerCase();
+            if (status === 'paid' || status === 'printing' || status === 'completed') {
+              updateOrderStatusTracker(status, msg.order || msg);
+            }
+          } catch (_) {}
+        };
+      } catch (_) {}
+
+      // Polling fallback every 4s ensures confirmation and live status even if WebSocket drops
+      pollTimer = setInterval(async () => {
+        if (!activeOrderId) return;
+        try {
+          const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/status`);
+          if (!res.ok) return;
+          const statusData = await res.json();
+          const s = (statusData.status || '').toLowerCase();
+          if (s === 'paid' || s === 'printing' || s === 'completed') {
+            updateOrderStatusTracker(s, statusData.order || statusData);
+          }
+        } catch (_) {}
+      }, 4000);
+    }
+
+    function renderUpiCheckoutCard(orderPayload, fileCount, totalPagesCount) {
+      activeOrderId = orderPayload.order_id;
+      activeOrderAmount = Number(orderPayload.total_amount || 0);
+      activeUpiUri = orderPayload.upi_uri || orderPayload.upi_string || '';
+
+      checkoutOrderIdBadge.textContent = activeOrderId;
+      checkoutSummaryMeta.textContent = `${totalPagesCount} ${totalPagesCount === 1 ? 'page' : 'pages'} • ${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
+      checkoutAmount.textContent = `₹${activeOrderAmount.toFixed(2)}`;
+      checkoutVpaLabel.textContent = `VPA: ${orderPayload.vendor_vpa || 'shop@okaxis'}`;
+
+      upiIntentBtn.href = activeUpiUri || '#';
+      upiQrCanvas.innerHTML = '';
+      if (typeof QRCode !== 'undefined' && activeUpiUri) {
+        new QRCode(upiQrCanvas, {
+          text: activeUpiUri,
+          width: 200,
+          height: 200,
+          colorDark: '#4C1D95',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } else {
+        upiQrCanvas.innerHTML = `<div class="p-3 text-[11px] font-mono break-all text-brand-800">${activeUpiUri}</div>`;
+      }
+
+      upiSuccessView.classList.add('hidden');
+      upiPendingView.classList.remove('hidden');
+      upiCheckoutSection.classList.remove('hidden');
+      payButton.classList.add('hidden');
+      upiCheckoutSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      lucide.createIcons();
+
+      startPaymentListeners(activeOrderId);
+    }
+
+    upiIntentBtn.addEventListener('click', (e) => {
+      if (!activeUpiUri) {
+        e.preventDefault();
+        return;
+      }
+      // Explicitly navigate for mobile UPI intent handlers (GPay / PhonePe / Paytm / BHIM)
+      window.location.href = activeUpiUri;
+    });
+
+    simulatePayBtn.addEventListener('click', async () => {
+      if (!activeOrderId) return;
+      simulatePayBtn.disabled = true;
+      simulatePayBtn.textContent = 'Verifying...';
+      try {
+        const res = await fetch(`/api/orders/${encodeURIComponent(activeOrderId)}/verify-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ verified_by: 'sandbox_portal' })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Payment verification failed');
+        }
+        const paidData = await res.json();
+        showPaidSuccessState(paidData.order || paidData);
+      } catch (err) {
+        alert(`Error verifying payment: ${err.message}`);
+      } finally {
+        simulatePayBtn.disabled = false;
+        simulatePayBtn.textContent = 'Simulate Test Payment';
+      }
+    });
+
+    cancelCheckoutBtn.addEventListener('click', async () => {
+      stopPaymentListeners();
+      if (activeOrderId) {
+        try {
+          await fetch(`/api/documents/orders/${encodeURIComponent(activeOrderId)}/cancel`, {
+            method: 'POST'
+          });
+        } catch (_) {}
+      }
+      activeOrderId = null;
+      upiCheckoutSection.classList.add('hidden');
+      payButton.classList.remove('hidden');
+      payButton.disabled = queue.length === 0;
+      payButtonText.textContent = 'Proceed to UPI Payment';
+    });
+
+    newOrderBtn.addEventListener('click', () => {
+      stopPaymentListeners();
+      activeOrderId = null;
+      queue.forEach(item => {
+        if (item.previewUrl && item.previewUrl.startsWith('blob:')) {
+          try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
+        }
+      });
+      queue = [];
+      upiCheckoutSection.classList.add('hidden');
+      payButton.classList.remove('hidden');
+      payButtonText.textContent = 'Proceed to UPI Payment';
+      renderQueue();
+    });
+
+    payButton.addEventListener('click', async () => {
+      if (queue.length === 0) return;
+
+      payButton.disabled = true;
+      payButtonText.textContent = 'Uploading & Creating UPI Order...';
+
+      try {
+        const formData = new FormData();
+        formData.append('vendor_id', '{{ vendor_id }}');
+        const itemsConfig = queue.map(item => ({
+          copies: item.copies,
+          is_color: item.isColor,
+          page_range: item.pageRange || 'all',
+          orientation: item.orientation || 'portrait'
+        }));
+        queue.forEach(item => {
+          formData.append('files', item.file);
+        });
+
+        const primaryCopies = queue[0] ? queue[0].copies : 1;
+        const primaryIsColor = queue.some(item => item.isColor);
+        const primaryPageRange = queue[0]?.pageRange || 'all';
+        const primaryOrientation = queue[0]?.orientation || 'portrait';
+        formData.append('copies', primaryCopies);
+        formData.append('is_color', primaryIsColor);
+        formData.append('page_range', primaryPageRange);
+        formData.append('orientation', primaryOrientation);
+        formData.append('items_config', JSON.stringify(itemsConfig));
+
+        const uploadRes = await fetch('/api/documents/batch-upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json();
+          throw new Error(err.detail || 'Batch upload validation failed.');
+        }
+
+        const uploadData = await uploadRes.json();
+
+        // Finalize order and retrieve NPCI-compliant UPI intent payload
+        const orderRes = await fetch('/api/orders/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vendor_id: '{{ vendor_id }}',
+            order_id: uploadData.order_id,
+            pages: uploadData.total_pages || 1,
+            copies: primaryCopies,
+            color_mode: primaryIsColor ? 'color' : 'bw',
+            page_range: primaryPageRange,
+            orientation: primaryOrientation
+          })
+        });
+
+        if (!orderRes.ok) {
+          const err = await orderRes.json();
+          throw new Error(err.detail || 'Failed to create UPI payment order.');
+        }
+
+        const orderPayload = await orderRes.json();
+        renderUpiCheckoutCard(
+          orderPayload,
+          uploadData.uploaded_documents.length,
+          uploadData.total_pages || 1
+        );
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+        payButton.disabled = false;
+        payButtonText.textContent = 'Proceed to UPI Payment';
+      }
+    });
+  </script>
+</body>
+</html>

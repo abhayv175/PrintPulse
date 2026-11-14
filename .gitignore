@@ -1,0 +1,50 @@
+# -----------------------------------------------------------------------------
+# Secrets & Environment Variables (Strictly Blocked)
+# -----------------------------------------------------------------------------
+.env
+.env.*
+*.env
+backend/.env
+backend/.env.*
+# Allow harmless template examples only
+!.env.example
+!backend/.env.example
+
+# -----------------------------------------------------------------------------
+# Customer File Upload Staging (Multi-Tenant Isolation)
+# -----------------------------------------------------------------------------
+uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# -----------------------------------------------------------------------------
+# Python, Virtual Environments & Testing Artifacts
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+*.log
+
+# -----------------------------------------------------------------------------
+# Mobile Build Artifacts (Android / Buildozer / Flutter)
+# -----------------------------------------------------------------------------
+.buildozer/
+bin/
+*.apk
+*.aab
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# -----------------------------------------------------------------------------
+# OS & IDE Configuration
+# -----------------------------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/

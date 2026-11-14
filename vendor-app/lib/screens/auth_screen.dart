@@ -1,0 +1,505 @@
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import '../config/api_config.dart';
+import '../theme/app_theme.dart';
+import '../widgets/animated_background.dart';
+import 'dashboard_screen.dart';
+
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({super.key});
+
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  bool _isLoading = false;
+  String? _errorMessage;
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final response = await http.post(
+        ApiConfig.authGoogleUri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'id_token': 'mock_token_shopkeeper@gmail.com',
+        }),
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final vendorId = data['vendor_id']?.toString().trim() ?? '';
+
+        if (vendorId.isEmpty) {
+          throw Exception('Vendor ID not returned from server');
+        }
+
+        final rawShopUrl = data['shop_url']?.toString().trim() ?? '';
+        final shopUrl = rawShopUrl.isNotEmpty
+            ? rawShopUrl
+            : ApiConfig.customerShopUrl(vendorId);
+
+        // Cache vendor credentials in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('vendor_id', vendorId);
+        await prefs.setString('shop_url', shopUrl);
+        if (data.containsKey('email')) {
+          await prefs.setString('email', data['email'].toString());
+        }
+        if (data['upi_id'] != null && data['upi_id'].toString().isNotEmpty) {
+          await prefs.setString('upi_id', data['upi_id'].toString());
+        }
+
+        if (!mounted) return;
+
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => DashboardScreen(
+              vendorId: vendorId,
+              shopUrl: shopUrl,
+            ),
+          ),
+        );
+      } else {
+        String errorDetail = 'Authentication failed (${response.statusCode})';
+        try {
+          final errData = jsonDecode(response.body);
+          if (errData is Map && errData['detail'] != null) {
+            errorDetail = errData['detail'].toString();
+          }
+        } catch (_) {}
+        setState(() {
+          _errorMessage = errorDetail;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorDetail),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Connection error: ${e.toString()}';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to connect to backend: ${e.toString()}'),
+          backgroundColor: AppColors.dangerRed,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final palette = PrintPulsePalette.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final primaryTextColor = theme.colorScheme.onSurface;
+    final secondaryTextColor = theme.textTheme.bodyMedium?.color ??
+        (isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary);
+
+    return Scaffold(
+      body: AnimatedBackground(
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final double minViewportHeight =
+                  (constraints.maxHeight - 48.0).clamp(0.0, double.infinity);
+
+              return SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28.0,
+                  vertical: 24.0,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: minViewportHeight),
+                  child: IntrinsicHeight(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const SizedBox(height: 16),
+
+                        // Center Brand Identity & Pure Pill Action Button
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 380),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Brand Logo Badge (84x84)
+                              Container(
+                                width: 84,
+                                height: 84,
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    colors: [
+                                      AppColors.primaryPurple,
+                                      AppColors.activePurple,
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(28),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppColors.primaryPurple
+                                          .withValues(alpha: 0.35),
+                                      blurRadius: 30,
+                                      spreadRadius: 2,
+                                      offset: const Offset(0, 10),
+                                    ),
+                                  ],
+                                ),
+                                child: const Icon(
+                                  Icons.print_rounded,
+                                  color: Colors.white,
+                                  size: 44,
+                                ),
+                              )
+                                  .animate()
+                                  .fadeIn(
+                                    delay: 100.ms,
+                                    duration: 400.ms,
+                                    curve: Curves.easeOutCubic,
+                                  )
+                                  .scale(
+                                    begin: const Offset(0.85, 0.85),
+                                    end: const Offset(1.0, 1.0),
+                                    delay: 100.ms,
+                                    duration: 400.ms,
+                                    curve: Curves.easeOutBack,
+                                  ),
+
+                              const SizedBox(height: 26),
+
+                              // "PrintPulse" Brand & Subtitle Chip
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'PrintPulse',
+                                    style: TextStyle(
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: -0.9,
+                                      color: primaryTextColor,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: palette.chipBg,
+                                      borderRadius: BorderRadius.circular(9999),
+                                      border: Border.all(
+                                        color: palette.chipBorder,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      'Kiosk & Live Order Terminal',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: palette.chipText,
+                                        letterSpacing: 0.2,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                                  .animate()
+                                  .fadeIn(
+                                    delay: 250.ms,
+                                    duration: 350.ms,
+                                    curve: Curves.easeOutCubic,
+                                  )
+                                  .moveY(
+                                    begin: 20,
+                                    end: 0,
+                                    delay: 250.ms,
+                                    duration: 350.ms,
+                                    curve: Curves.easeOutCubic,
+                                  ),
+
+                              const SizedBox(height: 44),
+
+                              // Compact Error Banner if Sign-In Fails
+                              if (_errorMessage != null) ...[
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.dangerRed
+                                        .withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: AppColors.dangerRed
+                                          .withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline_rounded,
+                                        color: AppColors.dangerRed,
+                                        size: 20,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          _errorMessage!,
+                                          style: const TextStyle(
+                                            color: AppColors.dangerRed,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 18),
+                              ],
+
+                              // Pill-Shaped "Sign in with Google" Action Button
+                              SizedBox(
+                                width: double.infinity,
+                                height: 56,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(9999),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: AppColors.primaryPurple
+                                            .withValues(alpha: 0.35),
+                                        blurRadius: 22,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                    ],
+                                  ),
+                                  child: ElevatedButton(
+                                    onPressed:
+                                        _isLoading ? null : _handleGoogleSignIn,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.primaryPurple,
+                                      foregroundColor: Colors.white,
+                                      disabledBackgroundColor: AppColors
+                                          .primaryPurple
+                                          .withValues(alpha: 0.6),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 18,
+                                      ),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(9999),
+                                      ),
+                                    ),
+                                    child: _isLoading
+                                        ? const SizedBox(
+                                            height: 22,
+                                            width: 22,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.5,
+                                              valueColor:
+                                                  AlwaysStoppedAnimation<Color>(
+                                                Colors.white,
+                                              ),
+                                            ),
+                                          )
+                                        : const Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              SizedBox(
+                                                width: 20,
+                                                height: 20,
+                                                child: CustomPaint(
+                                                  painter:
+                                                      _GoogleLogoPainter(),
+                                                ),
+                                              ),
+                                              SizedBox(width: 12),
+                                              Flexible(
+                                                child: FittedBox(
+                                                  fit: BoxFit.scaleDown,
+                                                  child: Text(
+                                                    'Sign in with Google',
+                                                    maxLines: 1,
+                                                    style: TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: Colors.white,
+                                                      letterSpacing: 0.2,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                  ),
+                                ),
+                              )
+                                  .animate()
+                                  .fadeIn(
+                                    delay: 400.ms,
+                                    duration: 350.ms,
+                                    curve: Curves.easeOutCubic,
+                                  )
+                                  .moveY(
+                                    begin: 24,
+                                    end: 0,
+                                    delay: 400.ms,
+                                    duration: 400.ms,
+                                    curve: Curves.easeOutBack,
+                                  )
+                                  .scale(
+                                    begin: const Offset(0.92, 0.92),
+                                    end: const Offset(1.0, 1.0),
+                                    delay: 400.ms,
+                                    duration: 400.ms,
+                                    curve: Curves.easeOutBack,
+                                  ),
+                            ],
+                          ),
+                        ),
+
+                        // Minimal Bottom Host Status Badge with Breathing Room
+                        Padding(
+                          padding: const EdgeInsets.only(top: 40, bottom: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: palette.subtlePillBg,
+                              borderRadius: BorderRadius.circular(9999),
+                              border: Border.all(
+                                color: palette.subtlePillBorder,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.successGreen,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'Host: ${ApiConfig.baseHost}',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: secondaryTextColor,
+                                      fontFamily: 'monospace',
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                              .animate()
+                              .fadeIn(
+                                delay: 550.ms,
+                                duration: 300.ms,
+                                curve: Curves.easeOut,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Crisp single-color geometric Google 'G' glyph in white.
+class _GoogleLogoPainter extends CustomPainter {
+  const _GoogleLogoPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final outerRadius = size.width * 0.45;
+    final strokeWidth = size.width * 0.21;
+    final arcRadius = outerRadius - strokeWidth / 2;
+
+    canvas.save();
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: center, radius: outerRadius)),
+    );
+
+    final arcPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.butt;
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: arcRadius),
+      0.0,
+      1.74 * math.pi,
+      false,
+      arcPaint,
+    );
+
+    final barPaint = Paint()..color = Colors.white;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        center.dx,
+        center.dy - strokeWidth * 0.44,
+        outerRadius + 1,
+        strokeWidth * 0.90,
+      ),
+      barPaint,
+    );
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _GoogleLogoPainter oldDelegate) => false;
+}

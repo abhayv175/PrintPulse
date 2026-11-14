@@ -1,0 +1,160 @@
+/* PrintPulse Liquid Glassmorphism & Animated Mesh Design System */
+
+:root {
+  --brand-purple: #7C3AED;
+  --secondary-purple: #A78BFA;
+  --light-lavender: #C4B5FD;
+  --active-purple: #6D28D9;
+  --bg-gradient-start: #FAF5FF;
+  --bg-gradient-mid: #F3E8FF;
+  --bg-gradient-end: #FFFFFF;
+  --glass-surface: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(124, 58, 237, 0.14);
+  --glass-shadow: 0 8px 32px 0 rgba(124, 58, 237, 0.08);
+  --text-primary: #1F2937;
+  --text-secondary: #6B7280;
+  --orb-1: rgba(124, 58, 237, 0.16);
+  --orb-2: rgba(167, 139, 250, 0.14);
+  --dropzone-bg: rgba(255, 255, 255, 0.65);
+  --dropzone-border: rgba(124, 58, 237, 0.28);
+  --dropzone-hover-border: #7C3AED;
+  --dropzone-hover-bg: rgba(243, 232, 255, 0.85);
+  --subtle-pill-bg: rgba(124, 58, 237, 0.08);
+  --subtle-pill-border: rgba(124, 58, 237, 0.18);
+  --subtle-pill-text: #7C3AED;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-gradient-start: #0F0C20;
+    --bg-gradient-mid: #1A103C;
+    --bg-gradient-end: #090514;
+    --glass-surface: rgba(26, 16, 60, 0.68);
+    --glass-border: rgba(167, 139, 250, 0.2);
+    --glass-shadow: 0 8px 32px 0 rgba(124, 58, 237, 0.18);
+    --text-primary: #F9FAFB;
+    --text-secondary: #9CA3AF;
+    --orb-1: rgba(124, 58, 237, 0.24);
+    --orb-2: rgba(196, 181, 253, 0.18);
+    --dropzone-bg: rgba(26, 16, 60, 0.55);
+    --dropzone-border: rgba(167, 139, 250, 0.3);
+    --dropzone-hover-border: #A78BFA;
+    --dropzone-hover-bg: rgba(38, 24, 85, 0.85);
+    --subtle-pill-bg: rgba(124, 58, 237, 0.2);
+    --subtle-pill-border: rgba(167, 139, 250, 0.3);
+    --subtle-pill-text: #C4B5FD;
+  }
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-mid), var(--bg-gradient-end));
+  background-size: 200% 200%;
+  animation: meshGradientFlow 16s ease infinite;
+  color: var(--text-primary);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Ambient Floating Mesh Orbs */
+.ambient-orb {
+  position: fixed;
+  border-radius: 9999px;
+  filter: blur(65px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ambient-orb-1 {
+  width: 440px;
+  height: 440px;
+  top: -120px;
+  right: -100px;
+  background: radial-gradient(circle, var(--orb-1) 0%, transparent 70%);
+  animation: orbFloat1 18s ease-in-out infinite;
+}
+
+.ambient-orb-2 {
+  width: 480px;
+  height: 480px;
+  bottom: -140px;
+  left: -120px;
+  background: radial-gradient(circle, var(--orb-2) 0%, transparent 70%);
+  animation: orbFloat2 22s ease-in-out infinite;
+}
+
+@keyframes meshGradientFlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes orbFloat1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-60px, 50px) scale(1.12); }
+}
+
+@keyframes orbFloat2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(70px, -60px) scale(0.92); }
+}
+
+/* Staggered Entrance Animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.anim-stagger {
+  animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.delay-0 { animation-delay: 0.05s; opacity: 0; }
+.delay-1 { animation-delay: 0.12s; opacity: 0; }
+.delay-2 { animation-delay: 0.20s; opacity: 0; }
+.delay-3 { animation-delay: 0.28s; opacity: 0; }
+.delay-4 { animation-delay: 0.36s; opacity: 0; }
+
+/* Liquid Glass Cards */
+.liquid-glass {
+  background: var(--glass-surface);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 24px;
+}
+
+.liquid-glass-pill {
+  background: var(--glass-surface);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 9999px;
+}
+
+/* Dropzone Styling */
+.liquid-dropzone {
+  background: var(--dropzone-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 2px dashed var(--dropzone-border);
+  border-radius: 24px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-dropzone:hover,
+.liquid-dropzone.dragover {
+  border-color: var(--dropzone-hover-border);
+  background: var(--dropzone-hover-bg);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(124, 58, 237, 0.16);
+}
