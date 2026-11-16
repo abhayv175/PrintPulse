@@ -492,8 +492,8 @@
     let queue = [];
     let isCheckoutLocked = false;
     const rates = {
-      bw: Number({{ bw_price | default(2.0) }}),
-      color: Number({{ color_price | default(10.0) }})
+      bw: Number("{{ bw_price | default(2.0) }}"),
+      color: Number("{{ color_price | default(10.0) }}")
     };
 
     const fileInput = document.getElementById('fileInput');
