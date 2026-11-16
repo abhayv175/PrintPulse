@@ -20,7 +20,7 @@ typedef PrintLayoutExecutor = Future<bool> Function({
 });
 
 /// Normalizes any download URL replacing localhost, 127.0.0.1, or stale IPs
-/// with the active configured host (e.g. 192.168.1.41:8000).
+/// with the active configured host (e.g. jh0yc.aiccloud.online).
 String normalizeDownloadUrl(String rawUrl) {
   final trimmed = rawUrl.trim();
   if (trimmed.isEmpty) return '';
@@ -30,6 +30,8 @@ String normalizeDownloadUrl(String rawUrl) {
   }
 
   var normalized = trimmed;
+  normalized = normalized.replaceAll('http://localhost:8000', ApiConfig.restBaseUrl);
+  normalized = normalized.replaceAll('http://127.0.0.1:8000', ApiConfig.restBaseUrl);
   normalized = normalized.replaceAll('localhost:8000', ApiConfig.baseHost);
   normalized = normalized.replaceAll('127.0.0.1:8000', ApiConfig.baseHost);
   normalized = normalized.replaceAll('localhost', ApiConfig.baseHost);
@@ -192,7 +194,7 @@ Future<bool> handleVerifyPaymentAndPrint(
 
 /// Hardened "Print Now" handler that:
 /// 1. Immediately presents visible loading diagnostic feedback.
-/// 2. Normalizes download URL to the active IP (192.168.1.41:8000).
+/// 2. Normalizes download URL to the active host (jh0yc.aiccloud.online).
 /// 3. Downloads the compiled A4 application/pdf stream directly from FastAPI.
 /// 4. Feeds raw PDF bytes directly to Printing.layoutPdf without client-side image decoding.
 /// 5. Catches all network/HTTP and platform errors and displays a clear red SnackBar.

@@ -4,16 +4,16 @@ import 'dart:io';
 import 'google_auth_config.dart';
 
 class ApiConfig {
-  /// Default compiled host IP, overridable via --dart-define=HOST_IP or scripts/sync_ip.py
+  /// Default compiled live cloud backend host, overridable via --dart-define=HOST_IP
   static const String defaultHostIp =
-      String.fromEnvironment('HOST_IP', defaultValue: '192.168.1.41');
+      String.fromEnvironment('HOST_IP', defaultValue: 'jh0yc.aiccloud.online');
 
   static String _activeHostIp = defaultHostIp;
 
-  /// Active IP address pointing to the backend serving machine.
+  /// Active IP address or domain pointing to the backend serving machine.
   static String get hostIp => _activeHostIp;
 
-  /// Updates the active IP address at runtime.
+  /// Updates the active host address at runtime.
   static set hostIp(String ip) {
     final clean = ip.trim();
     if (clean.isNotEmpty) {
@@ -49,19 +49,32 @@ class ApiConfig {
   static String get webSocketUrl =>
       isSecure ? 'wss://$baseHost' : 'ws://$baseHost';
 
-  static final RegExp _localIpv4Pattern = RegExp(r'192\.168\.\d+\.\d+');
+  static final RegExp _localHostPattern =
+      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)');
+  static final RegExp _legacyUrlPrefixPattern =
+      RegExp(r'https?://(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)(:\d+)?');
+  static final RegExp _legacyHostWithPortPattern =
+      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)(:\d+)?');
 
-  /// Returns true when [value] contains a 192.168.x.x IP other than [hostIp].
+  /// Returns true when [value] contains a local/stale IP or localhost reference other than [hostIp].
   static bool hasOutdatedLocalHost(String value) {
-    return _localIpv4Pattern
+    if (value.isEmpty) return false;
+    if (value.contains('192.168.') ||
+        value.contains('localhost') ||
+        value.contains('127.0.0.1')) {
+      return true;
+    }
+    return _localHostPattern
         .allMatches(value)
         .any((match) => match.group(0) != hostIp);
   }
 
-  /// Replaces outdated 192.168.x.x host IP references with [hostIp].
+  /// Replaces outdated local/stale host references with the active cloud host.
   static String normalizeLegacyHost(String value) {
     if (value.isEmpty || !hasOutdatedLocalHost(value)) return value;
-    return value.replaceAll(_localIpv4Pattern, hostIp);
+    var result = value.replaceAll(_legacyUrlPrefixPattern, restBaseUrl);
+    result = result.replaceAll(_legacyHostWithPortPattern, baseHost);
+    return result;
   }
 
   /// Performs an autonomous LAN UDP broadcast discovery on port 8002

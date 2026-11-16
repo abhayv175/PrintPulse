@@ -18,7 +18,7 @@ import socket
 import subprocess
 import sys
 
-DEFAULT_FALLBACK_IP = "192.168.1.41"
+DEFAULT_FALLBACK_IP = "jh0yc.aiccloud.online"
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 API_CONFIG_PATH = os.path.join(
     REPO_ROOT, "vendor-app", "lib", "config", "api_config.dart"
@@ -98,6 +98,11 @@ def update_env_file(target_ip: str) -> bool:
         with open(BACKEND_ENV_PATH, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
+    is_domain = not all(p.isdigit() for p in target_ip.split(".")) if "." in target_ip else False
+    protocol = "https" if is_domain else "http"
+    port_suffix = "" if is_domain else ":8000"
+    base_url = f"{protocol}://{target_ip}{port_suffix}"
+
     updated_host = False
     updated_url = False
     new_lines = []
@@ -107,7 +112,7 @@ def update_env_file(target_ip: str) -> bool:
             new_lines.append(f"HOST_IP={target_ip}\n")
             updated_host = True
         elif line.startswith("SHOP_BASE_URL="):
-            new_lines.append(f"SHOP_BASE_URL=http://{target_ip}:8000\n")
+            new_lines.append(f"SHOP_BASE_URL={base_url}\n")
             updated_url = True
         else:
             new_lines.append(line)
@@ -115,7 +120,7 @@ def update_env_file(target_ip: str) -> bool:
     if not updated_host:
         new_lines.append(f"HOST_IP={target_ip}\n")
     if not updated_url:
-        new_lines.append(f"SHOP_BASE_URL=http://{target_ip}:8000\n")
+        new_lines.append(f"SHOP_BASE_URL={base_url}\n")
 
     with open(BACKEND_ENV_PATH, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
@@ -135,9 +140,14 @@ def main():
     print(" PrintPulse Autonomous LAN IP Synchronizer")
     print("=" * 60)
     print(f" Detected Active LAN IP : {target_ip}")
-    print(f" HTTP Base Serving URL  : http://{target_ip}:8000")
-    print(f" WebSocket Endpoint     : ws://{target_ip}:8000")
-    print(f" Customer Web Portal    : http://{target_ip}:8000/shop/<vendor_id>")
+    is_domain = not all(p.isdigit() for p in target_ip.split(".")) if "." in target_ip else False
+    protocol = "https" if is_domain else "http"
+    ws_protocol = "wss" if is_domain else "ws"
+    port_suffix = "" if is_domain else ":8000"
+
+    print(f" HTTP Base Serving URL  : {protocol}://{target_ip}{port_suffix}")
+    print(f" WebSocket Endpoint     : {ws_protocol}://{target_ip}{port_suffix}")
+    print(f" Customer Web Portal    : {protocol}://{target_ip}{port_suffix}/shop/<vendor_id>")
     print("-" * 60)
 
     if check_only:

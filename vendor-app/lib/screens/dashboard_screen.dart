@@ -414,7 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Enter your laptop IP (e.g. 192.168.1.41) serving PrintPulse.',
+                    'Enter your server URL or IP (e.g. jh0yc.aiccloud.online) serving PrintPulse.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 13,
@@ -424,9 +424,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(height: 16),
                   TextField(
                     controller: controller,
-                    keyboardType: TextInputType.number,
+                    keyboardType: TextInputType.url,
                     decoration: InputDecoration(
-                      hintText: '192.168.1.41',
+                      hintText: 'jh0yc.aiccloud.online',
                       prefixIcon: const Icon(Icons.dns_rounded),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -506,7 +506,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Host updated to http://$result:8000'),
+          content: Text('Host updated to ${ApiConfig.restBaseUrl}'),
           backgroundColor: AppColors.successGreen,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

@@ -325,8 +325,8 @@ void main() {
 
     expect(find.text(derivedVendorId), findsOneWidget);
     expect(find.text(expectedUrl), findsOneWidget);
-    expect(find.text('http://192.168.1.41:8000'), findsOneWidget);
-    expect(find.text('ws://192.168.1.41:8000'), findsOneWidget);
+    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
+    expect(find.text('wss://jh0yc.aiccloud.online'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -345,7 +345,7 @@ void main() {
         darkTheme: AppTheme.darkTheme,
         home: DashboardScreen(
           vendorId: 'abhayv175',
-          shopUrl: 'http://192.168.1.41:8000/shop/abhayv175',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/abhayv175',
           testWebSocketStream: wsController.stream,
         ),
       ),
@@ -443,7 +443,7 @@ void main() {
   });
 
   testWidgets(
-      'Startup migrates stale 192.168.1.39 or empty SharedPreferences cache to 192.168.1.41',
+      'Startup migrates stale 192.168.1.39 or empty SharedPreferences cache to jh0yc.aiccloud.online',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({
       'vendor_id': 'abhayv175',
@@ -455,10 +455,10 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final migratedShopUrl = await loadNormalizedShopUrl(prefs);
 
-    expect(migratedShopUrl, 'http://192.168.1.41:8000/shop/abhayv175');
-    expect(prefs.getString('shop_url'), 'http://192.168.1.41:8000/shop/abhayv175');
-    expect(prefs.getString('api_host'), 'http://192.168.1.41:8000');
-    expect(prefs.getString('host_url'), 'http://192.168.1.41:8000');
+    expect(migratedShopUrl, 'https://jh0yc.aiccloud.online/shop/abhayv175');
+    expect(prefs.getString('shop_url'), 'https://jh0yc.aiccloud.online/shop/abhayv175');
+    expect(prefs.getString('api_host'), 'https://jh0yc.aiccloud.online');
+    expect(prefs.getString('host_url'), 'https://jh0yc.aiccloud.online');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -480,9 +480,9 @@ void main() {
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
 
-    expect(find.text('http://192.168.1.41:8000'), findsOneWidget);
-    expect(find.text('ws://192.168.1.41:8000'), findsOneWidget);
-    expect(find.text('http://192.168.1.41:8000/shop/abhayv175'), findsOneWidget);
+    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
+    expect(find.text('wss://jh0yc.aiccloud.online'), findsOneWidget);
+    expect(find.text('https://jh0yc.aiccloud.online/shop/abhayv175'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -539,7 +539,7 @@ void main() {
         darkTheme: AppTheme.darkTheme,
         home: DashboardScreen(
           vendorId: 'abhayv175',
-          shopUrl: 'http://192.168.1.41:8000/shop/abhayv175',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/abhayv175',
           testWebSocketStream: wsController.stream,
           testHttpClient: mockClient,
           testPrintExecutor: ({
@@ -564,7 +564,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    // 1. Image order with localhost URL -> normalizes to 192.168.1.41 and converts image to A4 PDF
+    // 1. Image order with localhost URL -> normalizes to jh0yc.aiccloud.online and converts image to A4 PDF
     wsController.add({
       'event': 'NEW_PRINT_JOB',
       'order_id': 'ord_img_77',
@@ -611,9 +611,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
-    // Host must be normalized away from localhost to 192.168.1.41:8000
-    expect(fetchedUri?.host, '192.168.1.41');
-    expect(fetchedUri?.port, 8000);
+    // Host must be normalized away from localhost to jh0yc.aiccloud.online:8000
+    expect(fetchedUri?.host, 'jh0yc.aiccloud.online');
+    expect(fetchedUri?.port, 443);
     expect(fetchedUri?.path, '/api/documents/ord_img_77/download');
     expect(capturedFormat, PdfPageFormat.a4);
     expect(capturedDynamicLayout, isFalse);
@@ -739,7 +739,7 @@ void main() {
       'total_pages': 7,
       'copies': 1,
       'color_mode': 'bw',
-      'download_url': 'http://192.168.1.41:8000/api/documents/ord_status_test/download',
+      'download_url': 'https://jh0yc.aiccloud.online/api/documents/ord_status_test/download',
       'documents': [],
     });
 
@@ -889,7 +889,7 @@ void main() {
     expect(ApiConfig.customerShopUrl('demo'), 'http://192.168.1.99:8000/shop/demo');
 
     // Reset back for UI test
-    ApiConfig.hostIp = '192.168.1.41';
+    ApiConfig.hostIp = 'jh0yc.aiccloud.online';
 
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
@@ -898,7 +898,7 @@ void main() {
         darkTheme: AppTheme.darkTheme,
         home: const DashboardScreen(
           vendorId: 'test_vendor',
-          shopUrl: 'http://192.168.1.41:8000/shop/test_vendor',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/test_vendor',
         ),
       ),
     );
@@ -920,7 +920,7 @@ void main() {
     await tester.ensureVisible(autoDetectFinder);
     await tester.pumpAndSettle();
 
-    expect(find.text('http://192.168.1.41:8000'), findsOneWidget);
+    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
 
     // Tap Auto-Detect button (it completes gracefully even if no beacon on loopback)
     await tester.tap(autoDetectFinder, warnIfMissed: false);
@@ -940,7 +940,7 @@ void main() {
       const MaterialApp(
         home: DashboardScreen(
           vendorId: 'shopkeeper',
-          shopUrl: 'http://192.168.1.41:8000/shop/shopkeeper',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/shopkeeper',
           showQrOnLoad: false,
         ),
       ),
@@ -1011,7 +1011,7 @@ void main() {
                 'orientation': 'portrait',
                 'auto_delete_after_print': true,
                 'download_url':
-                    'http://192.168.1.41:8000/api/documents/ORD-CONFIDENTIAL/download',
+                    'https://jh0yc.aiccloud.online/api/documents/ORD-CONFIDENTIAL/download',
               }
             ]
           }),
@@ -1027,7 +1027,7 @@ void main() {
         theme: AppTheme.lightTheme,
         home: DashboardScreen(
           vendorId: 'kiosk_1',
-          shopUrl: 'http://192.168.1.41:8000/shop/kiosk_1',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/kiosk_1',
           showQrOnLoad: false,
           testHttpClient: client,
         ),
@@ -1065,7 +1065,7 @@ void main() {
       totalPages: 1,
       status: 'paid',
       downloadUrl:
-          'http://192.168.1.41:8000/api/documents/ORD-RETAIN/download',
+          'https://jh0yc.aiccloud.online/api/documents/ORD-RETAIN/download',
       autoDeleteAfterPrint: false,
       documents: const [],
     );
@@ -1097,7 +1097,7 @@ void main() {
       totalPages: 1,
       status: 'paid',
       downloadUrl:
-          'http://192.168.1.41:8000/api/documents/ORD-DELETE/download',
+          'https://jh0yc.aiccloud.online/api/documents/ORD-DELETE/download',
       autoDeleteAfterPrint: true,
       documents: const [],
     );
@@ -1453,7 +1453,7 @@ void main() {
             'shop_name': "Kiosk 99's Print Shop",
             'upi_id': 'vendor99@okaxis',
             'session_token': 'pp_sess_mock_token_99',
-            'shop_url': 'http://192.168.1.41:8000/shop/kiosk_vendor_99',
+            'shop_url': 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99',
             'onboarded': true,
             'onboarding_completed': true,
           }),
@@ -1536,7 +1536,7 @@ void main() {
             'shop_name': '',
             'upi_id': '',
             'session_token': 'pp_sess_new',
-            'shop_url': 'http://192.168.1.41:8000/shop/new_kiosk_vendor',
+            'shop_url': 'https://jh0yc.aiccloud.online/shop/new_kiosk_vendor',
             'onboarded': false,
             'onboarding_completed': false,
             'bw_price': 2.0,
@@ -1665,7 +1665,7 @@ void main() {
               'pages': 7,
               'copies': 1,
               'is_color': false,
-              'download_url': 'http://192.168.1.41:8000/api/documents/ORD-CLAIM-123/download',
+              'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-CLAIM-123/download',
             }
           }),
           200,
@@ -1685,7 +1685,7 @@ void main() {
         theme: AppTheme.lightTheme,
         home: DashboardScreen(
           vendorId: 'kiosk_vendor_99',
-          shopUrl: 'http://192.168.1.41:8000/shop/kiosk_vendor_99',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99',
           testWebSocketStream: wsController.stream,
           testHttpClient: mockClient,
           testPrintExecutor: ({
@@ -1727,7 +1727,7 @@ void main() {
         'pages': 7,
         'copies': 1,
         'is_color': false,
-        'download_url': 'http://192.168.1.41:8000/api/documents/ORD-CLAIM-123/download',
+        'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-CLAIM-123/download',
       }
     });
     await tester.pumpAndSettle();
@@ -1787,15 +1787,15 @@ void main() {
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({
       'vendor_id': 'kiosk_vendor_99',
-      'shop_url': 'http://192.168.1.41:8000/shop/kiosk_vendor_99',
+      'shop_url': 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99',
     });
 
     activeVendorIdNotifier.value = 'kiosk_vendor_99';
-    activeShopUrlNotifier.value = 'http://192.168.1.41:8000/shop/kiosk_vendor_99';
+    activeShopUrlNotifier.value = 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99';
 
     await tester.pumpWidget(const PrintPulseVendorApp(
       initialVendorId: 'kiosk_vendor_99',
-      initialShopUrl: 'http://192.168.1.41:8000/shop/kiosk_vendor_99',
+      initialShopUrl: 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99',
     ));
     await tester.pumpAndSettle();
 
@@ -1870,7 +1870,7 @@ void main() {
               'pages': 5,
               'copies': 1,
               'is_color': false,
-              'download_url': 'http://192.168.1.41:8000/api/documents/ORD-CANCEL-1/download',
+              'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-CANCEL-1/download',
             }
           }),
           200,
@@ -1898,7 +1898,7 @@ void main() {
         theme: AppTheme.lightTheme,
         home: DashboardScreen(
           vendorId: 'test_vendor',
-          shopUrl: 'http://192.168.1.41:8000/shop/test_vendor',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/test_vendor',
           testWebSocketStream: wsController.stream,
           testHttpClient: mockClient,
           testPrintExecutor: ({
@@ -1935,10 +1935,10 @@ void main() {
           'copies': 1,
           'is_color': false,
           'total_amount': 25.0,
-          'download_url': 'http://192.168.1.41:8000/api/documents/ORD-CANCEL-1/download',
+          'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-CANCEL-1/download',
         }
       ],
-      'download_url': 'http://192.168.1.41:8000/api/documents/ORD-CANCEL-1/download',
+      'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-CANCEL-1/download',
     });
     await tester.pumpAndSettle();
 
@@ -2005,7 +2005,7 @@ void main() {
         'total_amount': 6.0,
         'status': 'completed',
         'auto_delete_after_print': false,
-        'download_url': 'http://192.168.1.41:8000/api/documents/ORD-REPRINT-1/download',
+        'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-REPRINT-1/download',
         'documents': [],
       },
     ];

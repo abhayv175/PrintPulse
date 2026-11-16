@@ -294,7 +294,7 @@ def test_e_google_auth_token_verification_endpoint(client=None):
     assert auth_data.get("email") == "shopkeeper@gmail.com"
     vendor_id = auth_data.get("vendor_id")
     assert vendor_id == "shopkeeper"
-    assert auth_data.get("shop_url") == "http://192.168.1.41:8000/shop/shopkeeper"
+    assert auth_data.get("shop_url") == "https://jh0yc.aiccloud.online/shop/shopkeeper"
 
     # 3. Google Workspace / custom domain account
     res_mock_bypass = client.post(
@@ -307,7 +307,7 @@ def test_e_google_auth_token_verification_endpoint(client=None):
     assert bypass_data.get("email") == "storeowner@printpulse.com"
     store_vendor_id = bypass_data.get("vendor_id")
     assert store_vendor_id == "storeowner"
-    assert bypass_data.get("shop_url") == "http://192.168.1.41:8000/shop/storeowner"
+    assert bypass_data.get("shop_url") == "https://jh0yc.aiccloud.online/shop/storeowner"
 
     # 4. Dots and special characters are sanitized to underscores & portal/WS work
     res_dotted = client.post(
@@ -317,7 +317,7 @@ def test_e_google_auth_token_verification_endpoint(client=None):
     assert res_dotted.status_code == 200
     dotted_data = res_dotted.json()
     assert dotted_data.get("vendor_id") == "abhay_verma_kiosk"
-    assert dotted_data.get("shop_url") == "http://192.168.1.41:8000/shop/abhay_verma_kiosk"
+    assert dotted_data.get("shop_url") == "https://jh0yc.aiccloud.online/shop/abhay_verma_kiosk"
 
     res_portal = client.get("/shop/abhay_verma_kiosk")
     assert res_portal.status_code == 200
@@ -494,7 +494,7 @@ def test_g_print_ready_preprocessing_pipeline(client: TestClient):
     assert res_download.status_code == 200
     assert "application/pdf" in res_download.headers.get("content-type", "")
     assert len(res_download.content) > 0
-    assert upload_res.json()["download_url"].startswith("http://192.168.1.41:8000")
+    assert upload_res.json()["download_url"].startswith("https://jh0yc.aiccloud.online")
 
     # 3. Check query override: copies=1, page_range="3", color_mode="color"
     res_override = client.get(

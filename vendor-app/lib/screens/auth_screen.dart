@@ -35,8 +35,8 @@ class _AuthScreenState extends State<AuthScreen> {
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
-            labelText: 'IP Address / Host',
-            hintText: '192.168.1.41 or 127.0.0.1',
+            labelText: 'Server URL / Host',
+            hintText: 'jh0yc.aiccloud.online',
           ),
         ),
         actions: [
@@ -82,23 +82,6 @@ class _AuthScreenState extends State<AuthScreen> {
             'id_token': idToken,
           }),
         ).timeout(const Duration(seconds: 7));
-      } catch (netErr) {
-        // Fallback check: if on USB connected Android device with adb reverse, try 127.0.0.1:8000
-        if (ApiConfig.hostIp != '127.0.0.1' && ApiConfig.hostIp != 'localhost') {
-          try {
-            final fallbackUri = Uri.parse('http://127.0.0.1:8000/api/auth/google');
-            response = await client.post(
-              fallbackUri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'id_token': idToken}),
-            ).timeout(const Duration(seconds: 5));
-            ApiConfig.hostIp = '127.0.0.1';
-          } catch (_) {
-            rethrow;
-          }
-        } else {
-          rethrow;
-        }
       } finally {
         if (ownsClient) client.close();
       }

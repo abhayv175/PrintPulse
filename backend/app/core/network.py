@@ -15,8 +15,8 @@ from fastapi import Request
 
 logger = logging.getLogger("printpulse.network")
 
-# Default fallback IP when operating completely offline without network interfaces
-DEFAULT_FALLBACK_IP = "192.168.1.41"
+# Default fallback host when operating without local environment overrides
+DEFAULT_FALLBACK_IP = "jh0yc.aiccloud.online"
 
 
 def get_lan_ip() -> str:
@@ -84,7 +84,11 @@ def get_base_url(request: Optional[Request] = None, port: int = 8000) -> str:
         except Exception:
             pass
 
-    return f"http://{get_lan_ip()}:{port}".rstrip("/")
+    lan_ip = get_lan_ip()
+    if lan_ip == "jh0yc.aiccloud.online" or (lan_ip and not all(p.isdigit() for p in lan_ip.split("."))):
+        return f"https://{lan_ip}".rstrip("/")
+
+    return f"http://{lan_ip}:{port}".rstrip("/")
 
 
 class UdpDiscoveryServer:
