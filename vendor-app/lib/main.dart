@@ -6,8 +6,21 @@ import 'screens/dashboard_screen.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 
+/// Global notifiers holding the currently authenticated vendor session.
+/// Enables declarative, clean root-level auth transitions with zero orphaned dependents.
+final ValueNotifier<String?> activeVendorIdNotifier = ValueNotifier<String?>(null);
+final ValueNotifier<String> activeShopUrlNotifier = ValueNotifier<String>('');
+
+/// Global root navigator key to ensure clean modal/route dismissal.
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 /// Migrates any stale or empty cached host settings in [prefs] to [ApiConfig.restBaseUrl].
 Future<String> loadNormalizedShopUrl(SharedPreferences prefs) async {
+  final savedHostIp = prefs.getString('host_ip')?.trim() ?? '';
+  if (savedHostIp.isNotEmpty && !ApiConfig.hasOutdatedLocalHost(savedHostIp)) {
+    ApiConfig.hostIp = savedHostIp;
+  }
+
   const hostKeys = [
     'host_url',
     'api_host',
@@ -54,6 +67,9 @@ void main() async {
   final savedVendorId = prefs.getString('vendor_id');
   final savedShopUrl = await loadNormalizedShopUrl(prefs);
 
+  activeVendorIdNotifier.value = savedVendorId;
+  activeShopUrlNotifier.value = savedShopUrl;
+
   runApp(PrintPulseVendorApp(
     initialVendorId: savedVendorId,
     initialShopUrl: savedShopUrl,
@@ -73,9 +89,17 @@ class PrintPulseVendorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: globalThemeController,
+      listenable: Listenable.merge([globalThemeController, activeVendorIdNotifier]),
       builder: (context, _) {
+        final currentVendorId = activeVendorIdNotifier.value ?? initialVendorId;
+        final currentShopUrl = activeShopUrlNotifier.value.isNotEmpty
+            ? activeShopUrlNotifier.value
+            : initialShopUrl;
+        final bool isAuthenticated =
+            currentVendorId != null && currentVendorId.isNotEmpty;
+
         return MaterialApp(
+          navigatorKey: rootNavigatorKey,
           title: 'PrintPulse Kiosk',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
@@ -83,12 +107,13 @@ class PrintPulseVendorApp extends StatelessWidget {
           themeMode: globalThemeController.themeMode,
           themeAnimationDuration: AppTheme.themeTransitionDuration,
           themeAnimationCurve: AppTheme.themeTransitionCurve,
-          home: (initialVendorId != null && initialVendorId!.isNotEmpty)
+          home: isAuthenticated
               ? DashboardScreen(
-                  vendorId: initialVendorId!,
-                  shopUrl: initialShopUrl,
+                  key: ValueKey('dashboard_$currentVendorId'),
+                  vendorId: currentVendorId,
+                  shopUrl: currentShopUrl,
                 )
-              : const AuthScreen(),
+              : const AuthScreen(key: ValueKey('auth_screen')),
         );
       },
     );

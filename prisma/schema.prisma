@@ -1,0 +1,40 @@
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Vendor {
+  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  vendor_id   String     @unique
+  email       String?    @unique
+  shop_name   String?
+  upi_id      String?
+  bw_price    Float      @default(2.0)
+  color_price Float      @default(10.0)
+  created_at  DateTime   @default(now())
+  jobs        PrintJob[]
+}
+
+model PrintJob {
+  id                      String   @id @default(auto()) @map("_id") @db.ObjectId
+  job_id                  String   @unique
+  short_id                String?
+  vendor_id               String
+  vendor                  Vendor   @relation(fields: [vendor_id], references: [vendor_id])
+  amount                  Float
+  payment_status          String   @default("PENDING_PAYMENT")
+  utr_number              String?
+  payment_method          String?  @default("upi")
+  payer_name              String?
+  paid_at                 DateTime?
+  page_count              Int      @default(1)
+  copies                  Int      @default(1)
+  is_color                Boolean  @default(false)
+  status                  String   @default("queued")
+  auto_delete_after_print Boolean  @default(false)
+  created_at              DateTime @default(now())
+}

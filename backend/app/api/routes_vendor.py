@@ -36,6 +36,14 @@ class UpdateVendorPricingRequest(BaseModel):
     color_price: float
 
 
+class VendorOnboardingRequest(BaseModel):
+    shop_name: str
+    bw_price: float
+    color_price: float
+    upi_id: str
+    vendor_name: Optional[str] = None
+
+
 def get_vendor_profile(vendor_id: str) -> dict:
     """
     Returns an existing vendor record or provisions default UPI settlement & pricing details.
@@ -51,6 +59,10 @@ def get_vendor_profile(vendor_id: str) -> dict:
             existing["bw_price"] = DEFAULT_BW_PRICE
         if "color_price" not in existing:
             existing["color_price"] = DEFAULT_COLOR_PRICE
+        if "onboarded" not in existing:
+            existing["onboarded"] = False
+        if "onboarding_completed" not in existing:
+            existing["onboarding_completed"] = False
         return existing
 
     profile = {
@@ -59,6 +71,8 @@ def get_vendor_profile(vendor_id: str) -> dict:
         "vendor_name": DEFAULT_VENDOR_NAME,
         "bw_price": DEFAULT_BW_PRICE,
         "color_price": DEFAULT_COLOR_PRICE,
+        "onboarded": False,
+        "onboarding_completed": False,
     }
     VENDORS[clean_id] = profile
     return profile
@@ -150,6 +164,7 @@ async def get_vendor(vendor_id: str):
     return get_vendor_profile(vendor_id)
 
 
+@router.patch("/{vendor_id}/upi")
 @router.post("/{vendor_id}/upi")
 async def update_vendor_upi(vendor_id: str, payload: UpdateVendorUpiRequest):
     upi_clean = payload.upi_id.strip()
@@ -163,6 +178,63 @@ async def update_vendor_upi(vendor_id: str, payload: UpdateVendorUpiRequest):
     if payload.vendor_name and payload.vendor_name.strip():
         profile["vendor_name"] = payload.vendor_name.strip()
     return profile
+
+
+@router.patch("/{vendor_id}/onboard")
+@router.post("/{vendor_id}/onboard")
+async def onboard_vendor(vendor_id: str, payload: VendorOnboardingRequest):
+    """
+    Saves shop name, print rates, and verified UPI ID during initial vendor onboarding.
+    Updates the in-memory profile and flags onboarding as completed.
+    """
+    clean_id = os.path.basename(vendor_id.strip())
+    if not clean_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid vendor ID.",
+        )
+
+    clean_shop = payload.shop_name.strip()
+    if not clean_shop:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Shop name cannot be empty.",
+        )
+
+    if payload.bw_price <= 0 or payload.color_price <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Print prices must be positive numbers greater than 0.",
+        )
+
+    upi_clean = payload.upi_id.strip()
+    if not UPI_REGEX.match(upi_clean):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid UPI VPA format (expected handle@bank, e.g. shop@okaxis).",
+        )
+
+    profile = get_vendor_profile(clean_id)
+    profile["shop_name"] = clean_shop
+    profile["vendor_name"] = (payload.vendor_name or "").strip() or clean_shop
+    profile["name"] = profile["vendor_name"]
+    profile["bw_price"] = round(float(payload.bw_price), 2)
+    profile["color_price"] = round(float(payload.color_price), 2)
+    profile["upi_id"] = upi_clean
+    profile["onboarded"] = True
+    profile["onboarding_completed"] = True
+
+    return {
+        "success": True,
+        "vendor_id": clean_id,
+        "shop_name": profile["shop_name"],
+        "vendor_name": profile["vendor_name"],
+        "bw_price": profile["bw_price"],
+        "color_price": profile["color_price"],
+        "upi_id": profile["upi_id"],
+        "onboarded": True,
+        "onboarding_completed": True,
+    }
 
 
 @router.get("/{vendor_id}/pricing")

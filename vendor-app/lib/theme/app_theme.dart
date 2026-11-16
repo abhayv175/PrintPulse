@@ -63,6 +63,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
   final Color sheetShadow;
   final Color sheetSecondaryBtnBg;
   final Color sheetSecondaryBtnFg;
+  final Color primaryTextColor;
+  final Color secondaryTextColor;
 
   const PrintPulsePalette({
     required this.bg1,
@@ -94,6 +96,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
     required this.sheetShadow,
     required this.sheetSecondaryBtnBg,
     required this.sheetSecondaryBtnFg,
+    required this.primaryTextColor,
+    required this.secondaryTextColor,
   });
 
   static PrintPulsePalette of(BuildContext context) {
@@ -134,6 +138,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
     sheetShadow: Color(0x1F000000),
     sheetSecondaryBtnBg: Color(0x147C3AED),
     sheetSecondaryBtnFg: Color(0xFF7C3AED),
+    primaryTextColor: AppColors.lightTextPrimary,
+    secondaryTextColor: AppColors.lightTextSecondary,
   );
 
   static const PrintPulsePalette dark = PrintPulsePalette(
@@ -166,6 +172,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
     sheetShadow: Color(0x80000000),
     sheetSecondaryBtnBg: Color(0x14FFFFFF),
     sheetSecondaryBtnFg: Color(0xFFFFFFFF),
+    primaryTextColor: AppColors.darkTextPrimary,
+    secondaryTextColor: AppColors.darkTextSecondary,
   );
 
   @override
@@ -199,6 +207,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
     Color? sheetShadow,
     Color? sheetSecondaryBtnBg,
     Color? sheetSecondaryBtnFg,
+    Color? primaryTextColor,
+    Color? secondaryTextColor,
   }) {
     return PrintPulsePalette(
       bg1: bg1 ?? this.bg1,
@@ -230,6 +240,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
       sheetShadow: sheetShadow ?? this.sheetShadow,
       sheetSecondaryBtnBg: sheetSecondaryBtnBg ?? this.sheetSecondaryBtnBg,
       sheetSecondaryBtnFg: sheetSecondaryBtnFg ?? this.sheetSecondaryBtnFg,
+      primaryTextColor: primaryTextColor ?? this.primaryTextColor,
+      secondaryTextColor: secondaryTextColor ?? this.secondaryTextColor,
     );
   }
 
@@ -266,6 +278,8 @@ class PrintPulsePalette extends ThemeExtension<PrintPulsePalette> {
       sheetShadow: _lerpColor(sheetShadow, other.sheetShadow, t),
       sheetSecondaryBtnBg: _lerpColor(sheetSecondaryBtnBg, other.sheetSecondaryBtnBg, t),
       sheetSecondaryBtnFg: _lerpColor(sheetSecondaryBtnFg, other.sheetSecondaryBtnFg, t),
+      primaryTextColor: _lerpColor(primaryTextColor, other.primaryTextColor, t),
+      secondaryTextColor: _lerpColor(secondaryTextColor, other.secondaryTextColor, t),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -5,12 +6,17 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
+import '../main.dart';
+import '../services/google_auth_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animated_background.dart';
+import '../widgets/onboarding_dialog.dart';
 import 'dashboard_screen.dart';
 
 class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
+  final http.Client? testHttpClient;
+
+  const AuthScreen({super.key, this.testHttpClient});
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -20,6 +26,40 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
+  void _showEditHostDialog() {
+    final controller = TextEditingController(text: ApiConfig.hostIp);
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Server Host IP'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'IP Address / Host',
+            hintText: '192.168.1.41 or 127.0.0.1',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newIp = controller.text.trim();
+              if (newIp.isNotEmpty) {
+                ApiConfig.hostIp = newIp;
+                setState(() {});
+              }
+              Navigator.of(dialogCtx).pop();
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleGoogleSignIn() async {
     setState(() {
       _isLoading = true;
@@ -27,13 +67,41 @@ class _AuthScreenState extends State<AuthScreen> {
     });
 
     try {
-      final response = await http.post(
-        ApiConfig.authGoogleUri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'id_token': 'mock_token_shopkeeper@gmail.com',
-        }),
-      );
+      // 1. Authenticate via GoogleAuthService and obtain Google ID token
+      final String idToken = await GoogleAuthService.authenticateAndGetIdToken();
+
+      // 2. Verify Google ID token against FastAPI backend
+      final client = widget.testHttpClient ?? http.Client();
+      final bool ownsClient = widget.testHttpClient == null;
+      http.Response response;
+      try {
+        response = await client.post(
+          ApiConfig.authGoogleUri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'id_token': idToken,
+          }),
+        ).timeout(const Duration(seconds: 7));
+      } catch (netErr) {
+        // Fallback check: if on USB connected Android device with adb reverse, try 127.0.0.1:8000
+        if (ApiConfig.hostIp != '127.0.0.1' && ApiConfig.hostIp != 'localhost') {
+          try {
+            final fallbackUri = Uri.parse('http://127.0.0.1:8000/api/auth/google');
+            response = await client.post(
+              fallbackUri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'id_token': idToken}),
+            ).timeout(const Duration(seconds: 5));
+            ApiConfig.hostIp = '127.0.0.1';
+          } catch (_) {
+            rethrow;
+          }
+        } else {
+          rethrow;
+        }
+      } finally {
+        if (ownsClient) client.close();
+      }
 
       if (!mounted) return;
 
@@ -50,26 +118,86 @@ class _AuthScreenState extends State<AuthScreen> {
             ? rawShopUrl
             : ApiConfig.customerShopUrl(vendorId);
 
-        // Cache vendor credentials in SharedPreferences
+        // Cache vendor credentials & profile in SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('vendor_id', vendorId);
         await prefs.setString('shop_url', shopUrl);
-        if (data.containsKey('email')) {
+        if (data['email'] != null) {
           await prefs.setString('email', data['email'].toString());
+        }
+        if (data['name'] != null) {
+          await prefs.setString('name', data['name'].toString());
+        } else if (data['vendor_name'] != null) {
+          await prefs.setString('name', data['vendor_name'].toString());
+        }
+        if (data['shop_name'] != null) {
+          await prefs.setString('shop_name', data['shop_name'].toString());
         }
         if (data['upi_id'] != null && data['upi_id'].toString().isNotEmpty) {
           await prefs.setString('upi_id', data['upi_id'].toString());
         }
+        if (data['session_token'] != null) {
+          await prefs.setString('session_token', data['session_token'].toString());
+        }
+        if (data['picture'] != null) {
+          await prefs.setString('picture', data['picture'].toString());
+        }
+        if (data['bw_price'] != null) {
+          await prefs.setDouble('bw_price', (data['bw_price'] as num).toDouble());
+        }
+        if (data['color_price'] != null) {
+          await prefs.setDouble('color_price', (data['color_price'] as num).toDouble());
+        }
+
+        final bool isFirstTime = prefs.getBool('has_seen_initial_qr') != true;
+        await prefs.setBool('has_seen_initial_qr', true);
+
+        final bool isAlreadyOnboarded = (data['onboarded'] == true) ||
+            (data['onboarding_completed'] == true) ||
+            (prefs.getBool('onboarding_completed') == true);
 
         if (!mounted) return;
 
-        Navigator.of(context).pushReplacement(
+        if (!isAlreadyOnboarded) {
+          setState(() {
+            _isLoading = false;
+          });
+          await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => OnboardingDialog(
+              vendorId: vendorId,
+              initialShopName: data['shop_name']?.toString() ?? '',
+              initialVendorName: data['name']?.toString() ?? data['vendor_name']?.toString() ?? '',
+              initialUpiId: data['upi_id']?.toString() ?? '',
+              initialBwPrice: (data['bw_price'] as num?)?.toDouble() ?? 2.0,
+              initialColorPrice: (data['color_price'] as num?)?.toDouble() ?? 10.0,
+              testHttpClient: widget.testHttpClient,
+            ),
+          );
+          await prefs.setBool('onboarding_completed', true);
+        }
+
+        if (!mounted) return;
+
+        // Dismiss any active SnackBars before route transition
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        // Update top-level auth state declaratively
+        activeVendorIdNotifier.value = vendorId;
+        activeShopUrlNotifier.value = shopUrl;
+
+        // Cleanly reset root navigator to DashboardScreen with zero orphaned route dependents
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (_) => DashboardScreen(
+              key: ValueKey('dashboard_$vendorId'),
               vendorId: vendorId,
               shopUrl: shopUrl,
+              showQrOnLoad: isFirstTime,
             ),
           ),
+          (route) => false,
         );
       } else {
         String errorDetail = 'Authentication failed (${response.statusCode})';
@@ -85,6 +213,28 @@ class _AuthScreenState extends State<AuthScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(errorDetail),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } on GoogleSignInException catch (e) {
+      if (!mounted) return;
+      if (e.code == GoogleSignInExceptionCode.canceled) {
+        // User closed or dismissed the Google account picker dialog
+        debugPrint('Google sign-in canceled by user.');
+        setState(() {
+          _errorMessage = null;
+        });
+      } else {
+        final desc = e.description ?? e.code.name;
+        setState(() {
+          _errorMessage = 'Google sign-in error: $desc';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Google Sign-In failed: $desc'),
             backgroundColor: AppColors.dangerRed,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -394,55 +544,57 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
 
-                        // Minimal Bottom Host Status Badge with Breathing Room
+                        // Minimal Bottom Host Status Badge with Breathing Room (Tap to change IP)
                         Padding(
                           padding: const EdgeInsets.only(top: 40, bottom: 8),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: palette.subtlePillBg,
-                              borderRadius: BorderRadius.circular(9999),
-                              border: Border.all(
-                                color: palette.subtlePillBorder,
+                          child: GestureDetector(
+                            onTap: _showEditHostDialog,
+                            behavior: HitTestBehavior.opaque,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
                               ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 7,
-                                  height: 7,
-                                  decoration: const BoxDecoration(
-                                    color: AppColors.successGreen,
-                                    shape: BoxShape.circle,
-                                  ),
+                              decoration: BoxDecoration(
+                                color: palette.subtlePillBg,
+                                borderRadius: BorderRadius.circular(9999),
+                                border: Border.all(
+                                  color: palette.subtlePillBorder,
                                 ),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    'Host: ${ApiConfig.baseHost}',
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: secondaryTextColor,
-                                      fontFamily: 'monospace',
-                                      fontWeight: FontWeight.w500,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 7,
+                                    height: 7,
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.successGreen,
+                                      shape: BoxShape.circle,
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          )
-                              .animate()
-                              .fadeIn(
-                                delay: 550.ms,
-                                duration: 300.ms,
-                                curve: Curves.easeOut,
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      'Host: ${ApiConfig.baseHost}',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: secondaryTextColor,
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                        ),
+                            ),
+                          ),
+                        ).animate().fadeIn(
+                              delay: 550.ms,
+                              duration: 300.ms,
+                              curve: Curves.easeOut,
+                            ),
                       ],
                     ),
                   ),

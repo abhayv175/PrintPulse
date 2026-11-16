@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -13,20 +14,25 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/api_config.dart';
+import '../main.dart';
 import '../models/print_job.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/animated_background.dart';
 import '../widgets/glass_container.dart';
-import '../services/sound_service.dart';
+import '../widgets/onboarding_dialog.dart';
+import '../services/google_auth_service.dart';
+import '../services/notification_service.dart';
+import '../services/order_history_service.dart';
 import 'auth_screen.dart';
-import 'home_screen.dart';
+import 'history_screen.dart';
 import 'profile_screen.dart';
 import 'queue_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String vendorId;
   final String shopUrl;
+  final bool showQrOnLoad;
   final Stream<dynamic>? testWebSocketStream;
   final http.Client? testHttpClient;
   final PrintLayoutExecutor? testPrintExecutor;
@@ -35,6 +41,7 @@ class DashboardScreen extends StatefulWidget {
     super.key,
     required this.vendorId,
     required this.shopUrl,
+    this.showQrOnLoad = false,
     this.testWebSocketStream,
     this.testHttpClient,
     this.testPrintExecutor,
@@ -46,6 +53,8 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey _qrCaptureKey = GlobalKey();
+  final GlobalKey<HistoryScreenState> _historyScreenKey =
+      GlobalKey<HistoryScreenState>();
   int _currentTabIndex = 0;
   late final PageController _pageController;
   late final ValueNotifier<double> _pageValueNotifier;
@@ -56,6 +65,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final Set<String> _verifyingOrders = {};
   final Set<String> _printingOrders = {};
   final Set<String> _settledOrderIds = {};
+  final Set<String> _completedOrderIds = {};
+  final Set<String> _unprintedPaidOrderIds = {};
+  final Set<String> _knownJobIds = {};
 
   int _completedJobsCount = 0;
   double _totalEarnings = 0.0;
@@ -67,6 +79,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   StreamSubscription? _channelSub;
   StreamSubscription? _testStreamSub;
   Timer? _reconnectTimer;
+  Timer? _pollingTimer;
   bool _isConnected = false;
   bool _isConnecting = false;
   bool _isDisposed = false;
@@ -81,6 +94,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadVendorUpi();
     _loadInitialOrders();
     _loadVendorStats();
+
+    // Initialize notification service and request Android 13+ permission on startup
+    NotificationService.initialize();
+
+    // Redundant fallback polling to detect new orders even if socket drops
+    _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted && !_isDisposed) {
+        _loadInitialOrders(isPolling: true);
+      }
+    });
+
     if (widget.testWebSocketStream != null) {
       _testStreamSub =
           widget.testWebSocketStream!.listen(_handleWebSocketMessage);
@@ -88,11 +112,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _connectWebSocket();
     }
 
-    // Auto-display Counter QR Modal on initial launch
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _showQrModal();
+    // Display Onboarding Dialog if vendor has not configured pricing/UPI yet, or show QR Modal
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final bool explicitlyIncomplete =
+            prefs.containsKey('onboarding_completed') &&
+            prefs.getBool('onboarding_completed') == false;
+        final upi = prefs.getString('upi_id') ?? '';
+        if (explicitlyIncomplete && upi.isEmpty && mounted) {
+          final onboarded = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => OnboardingDialog(
+              vendorId: widget.vendorId,
+              initialShopName: prefs.getString('shop_name') ?? '',
+              initialVendorName: prefs.getString('name') ?? '',
+              initialUpiId: prefs.getString('upi_id') ?? '',
+              initialBwPrice: prefs.getDouble('bw_price') ?? 2.0,
+              initialColorPrice: prefs.getDouble('color_price') ?? 10.0,
+            ),
+          );
+          if (onboarded == true) {
+            await prefs.setBool('onboarding_completed', true);
+            _loadVendorUpi();
+          }
+        }
+      } catch (_) {}
+
+      if (!mounted) return;
+      if (widget.showQrOnLoad) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('has_seen_initial_qr', true);
+        if (mounted) {
+          _showQrModal();
+        }
+        return;
       }
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final hasSeen = prefs.getBool('has_seen_initial_qr');
+        if (hasSeen == false) {
+          await prefs.setBool('has_seen_initial_qr', true);
+          if (mounted) {
+            _showQrModal();
+          }
+        }
+      } catch (_) {}
     });
   }
 
@@ -137,11 +204,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Future<void> _loadInitialOrders() async {
+  Future<void> _loadInitialOrders({bool isPolling = false}) async {
+    final client = widget.testHttpClient ?? http.Client();
+    final bool ownsClient = widget.testHttpClient == null;
     try {
       final uri = ApiConfig.vendorOrdersUri(widget.vendorId);
-      final client = widget.testHttpClient ?? http.Client();
-      final res = await client.get(uri).timeout(const Duration(seconds: 4));
+      final res = await client.get(uri).timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final dynamic decoded = jsonDecode(res.body);
         if (decoded is Map && decoded['orders'] is List) {
@@ -151,6 +219,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (mounted && loaded.isNotEmpty) {
             setState(() {
               for (final job in loaded) {
+                // Cease active queue tracking and status polling once an order is completed
+                if (_completedOrderIds.contains(job.orderId) ||
+                    job.status.toLowerCase() == 'completed') {
+                  _orders.removeWhere((o) => o.orderId == job.orderId);
+                  OrderHistoryService.recordOrder(
+                    widget.vendorId,
+                    job.copyWith(status: 'completed', paymentStatus: 'COMPLETED'),
+                  );
+                  continue;
+                }
+
+                final bool isBrandNew = !_knownJobIds.contains(job.orderId);
+                _knownJobIds.add(job.orderId);
+
                 final idx =
                     _orders.indexWhere((o) => o.orderId == job.orderId);
                 if (idx >= 0) {
@@ -161,6 +243,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 if (job.isPaid) {
                   _settledOrderIds.add(job.orderId);
                 }
+
+                // If detected during periodic background polling and not seen before, alert vendor
+                if (isPolling &&
+                    isBrandNew &&
+                    (job.isPaid || job.isCash || job.isPaymentClaimed)) {
+                  if (job.isPaymentClaimed) {
+                    NotificationService.alertNewJob(
+                      title: 'Payment Claimed',
+                      body:
+                          'UPI Claimed: ₹${job.totalAmount.toStringAsFixed(2)} • Please verify payment',
+                      payload: job.orderId,
+                    );
+                  } else {
+                    NotificationService.alertNewJob(
+                      title: 'New Print Job',
+                      body:
+                          'Order #${job.orderId} • ${job.totalPages} pages • ₹${job.totalAmount.toStringAsFixed(2)}',
+                      payload: job.orderId,
+                    );
+                  }
+                }
               }
             });
           }
@@ -168,6 +271,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       debugPrint('Failed to load initial orders: $e');
+    } finally {
+      if (ownsClient) client.close();
     }
   }
 
@@ -215,6 +320,198 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       }
+    }
+  }
+
+  bool _isAutoDetectingServer = false;
+
+  Future<void> _handleAutoDetectServer() async {
+    setState(() => _isAutoDetectingServer = true);
+    try {
+      final discoveredIp = await ApiConfig.discoverServerIp(timeoutMs: 2000);
+      if (discoveredIp != null) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('host_ip', discoveredIp);
+        await prefs.setString('api_host', ApiConfig.baseHost);
+        await prefs.setString('host_url', ApiConfig.restBaseUrl);
+        final newShopUrl = ApiConfig.customerShopUrl(widget.vendorId);
+        await prefs.setString('shop_url', newShopUrl);
+
+        if (!mounted) return;
+        setState(() {});
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text('Connected to local server at $discoveredIp:8000!'),
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.successGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('No server beacon found on local Wi-Fi. You can enter IP manually.'),
+            backgroundColor: Colors.orange.shade800,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            action: SnackBarAction(
+              label: 'Enter IP',
+              textColor: Colors.white,
+              onPressed: _showEditHostDialog,
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isAutoDetectingServer = false);
+    }
+  }
+
+  Future<void> _showEditHostDialog() async {
+    final controller = TextEditingController(text: ApiConfig.hostIp);
+    final result = await _showAnimatedModal<String>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (ctx) {
+        final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1735) : Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : const Color(0xFFE5E7EB),
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Configure Local Server IP',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : AppColors.lightTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Enter your laptop IP (e.g. 192.168.1.41) serving PrintPulse.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isDark ? Colors.white70 : const Color(0xFF6B7280),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      hintText: '192.168.1.41',
+                      prefixIcon: const Icon(Icons.dns_rounded),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            backgroundColor: isDark
+                                ? Colors.white.withValues(alpha: 0.08)
+                                : const Color(0xFFF3F4F6),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: isDark ? Colors.white : const Color(0xFF374151),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            final val = controller.text.trim();
+                            if (val.isNotEmpty) {
+                              Navigator.of(ctx).pop(val);
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            backgroundColor: AppColors.primaryPurple,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'Save IP',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (result != null && result.isNotEmpty && result != ApiConfig.hostIp) {
+      ApiConfig.hostIp = result;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('host_ip', result);
+      await prefs.setString('api_host', ApiConfig.baseHost);
+      await prefs.setString('host_url', ApiConfig.restBaseUrl);
+      final newShopUrl = ApiConfig.customerShopUrl(widget.vendorId);
+      await prefs.setString('shop_url', newShopUrl);
+
+      if (!mounted) return;
+      setState(() {});
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Host updated to http://$result:8000'),
+          backgroundColor: AppColors.successGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      );
     }
   }
 
@@ -351,6 +648,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void dispose() {
     _isDisposed = true;
+    _pollingTimer?.cancel();
     _pageController.removeListener(_handlePageScroll);
     _pageController.dispose();
     _pageValueNotifier.dispose();
@@ -445,7 +743,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _playPaymentPing() {
-    SoundService.playOrderChime();
+    NotificationService.playForegroundChime();
   }
 
   void _applyPaidSettlement(PrintJob incomingPaidJob) {
@@ -468,6 +766,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         : incomingPaidJob.copyWith(status: 'paid');
 
     final bool firstSettlement = _settledOrderIds.add(settledJob.orderId);
+    _knownJobIds.add(settledJob.orderId);
+    OrderHistoryService.recordOrder(widget.vendorId, settledJob);
 
     setState(() {
       _orders.removeWhere((o) => o.orderId == settledJob.orderId);
@@ -487,6 +787,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (firstSettlement && mounted) {
       _playPaymentPing();
+      NotificationService.alertNewJob(
+        title: 'New Print Job',
+        body:
+            'Paid: Order #${settledJob.orderId} • ${settledJob.totalPages} pages • ₹${settledJob.totalAmount.toStringAsFixed(2)}',
+        payload: settledJob.orderId,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
@@ -514,55 +820,213 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final dynamic decoded = raw is String ? jsonDecode(raw) : raw;
       final Map<String, dynamic> data = Map<String, dynamic>.from(decoded);
-      final event = data['event']?.toString() ?? '';
+      final event = data['event']?.toString() ?? data['type']?.toString() ?? '';
 
-      if (event == 'NEW_PRINT_JOB') {
-        final job = PrintJob.fromJson(data);
-        if (job.isPaid) {
-          _applyPaidSettlement(job);
-          return;
+      // 1. Order Cancelled
+      if (event == 'ORDER_CANCELLED' || event == 'order_cancelled') {
+        final cancelledId = data['order_id']?.toString();
+        if (cancelledId != null) {
+          setState(() {
+            _orders.removeWhere((o) => o.orderId == cancelledId);
+          });
         }
+        return;
+      }
+
+      // 2. Extract order payload if present
+      final Map<String, dynamic> orderMap = data['order'] is Map
+          ? Map<String, dynamic>.from(data['order'] as Map)
+          : Map<String, dynamic>.from(data);
+      orderMap.putIfAbsent('vendor_id', () => widget.vendorId);
+
+      final String status =
+          (orderMap['status']?.toString() ?? '').toLowerCase().trim();
+      final String paymentMethod = (orderMap['payment_method']?.toString() ??
+              orderMap['paymentMethod']?.toString() ??
+              'upi')
+          .toLowerCase()
+          .trim();
+
+      final String pStatus = (orderMap['payment_status']?.toString() ??
+              data['payment_status']?.toString() ??
+              '')
+          .toUpperCase()
+          .trim();
+
+      // Zero-Fee UPI Payment Claimed (Customer clicked "I Have Made the Payment")
+      if (event == 'payment-claimed' ||
+          data['event'] == 'payment-claimed' ||
+          pStatus == 'PAYMENT_CLAIMED' ||
+          status == 'upi_claimed' ||
+          status == 'paid_queued') {
+        orderMap['payment_status'] = 'PAYMENT_CLAIMED';
+        final claimedJob = PrintJob.fromJson(orderMap);
+        _knownJobIds.add(claimedJob.orderId);
         setState(() {
-          _orders.removeWhere((o) => o.orderId == job.orderId);
-          _orders.insert(0, job);
+          _orders.removeWhere((o) => o.orderId == claimedJob.orderId);
+          _orders.insert(0, claimedJob);
         });
+
+        _playPaymentPing();
+
+        final utrText = claimedJob.utrNumber != null &&
+                claimedJob.utrNumber!.isNotEmpty
+            ? ' • UTR #${claimedJob.utrNumber}'
+            : '';
+
+        NotificationService.alertNewJob(
+          title: 'Payment Claimed',
+          body:
+              'UPI Claimed: ₹${claimedJob.totalAmount.toStringAsFixed(2)}$utrText. Please verify payment.',
+          payload: claimedJob.orderId,
+        );
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Row(
                 children: [
-                  const Icon(Icons.print_rounded, color: Colors.white, size: 20),
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      color: Colors.white, size: 20),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'New Order: ${job.orderId} (Awaiting Payment • ₹${job.totalAmount.toStringAsFixed(2)})',
+                      'UPI Claimed: ₹${claimedJob.totalAmount.toStringAsFixed(2)}$utrText. Please verify payment.',
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
                 ],
               ),
-              backgroundColor: AppColors.primaryPurple,
+              backgroundColor: const Color(0xFFF59E0B),
               behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              duration: const Duration(seconds: 4),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              duration: const Duration(seconds: 5),
             ),
           );
         }
-      } else if (event == 'order_paid' || event == 'ORDER_PAID') {
-        final Map<String, dynamic> orderMap = data['order'] is Map
-            ? Map<String, dynamic>.from(data['order'] as Map)
-            : Map<String, dynamic>.from(data);
-        orderMap.putIfAbsent('vendor_id', () => widget.vendorId);
+        return;
+      }
+
+      // Rejection verification event
+      if ((event == 'payment-verified' && (data['approved'] == false || data['status'] == 'rejected')) ||
+          pStatus == 'REJECTED') {
+        final rejId = data['order_id']?.toString() ?? data['job_id']?.toString() ?? orderMap['order_id']?.toString();
+        if (rejId != null) {
+          setState(() {
+            final idx = _orders.indexWhere((o) => o.orderId == rejId);
+            if (idx != -1) {
+              _orders[idx] = _orders[idx].copyWith(paymentStatus: 'REJECTED');
+            }
+          });
+        }
+        return;
+      }
+
+      // STRICT GATE: Discard draft uploads awaiting payment with NO chime & NO queue insertion
+      if ((status == 'awaiting_payment' || status == 'pending_payment') &&
+          pStatus != 'PAYMENT_CLAIMED' &&
+          pStatus != 'CASH_AT_COUNTER') {
+        return;
+      }
+
+      // 3. Paid Order Settlement (UPI confirmed or Cash confirmed)
+      if (event == 'order_paid' ||
+          event == 'ORDER_PAID' ||
+          status == 'paid' ||
+          (data['type'] == 'status_update' && data['status'] == 'paid') ||
+          (data['event'] == 'status_update' && data['status'] == 'paid')) {
         orderMap['status'] = 'paid';
         final paidJob = PrintJob.fromJson(orderMap);
         _applyPaidSettlement(paidJob);
-      } else if (event == 'ORDER_CANCELLED') {
-        final cancelledId = data['order_id']?.toString();
-        if (cancelledId != null) {
+        return;
+      }
+
+      // 4. Cash Order Selected ("Pay Cash at Counter")
+      if (status == 'pending_cash' ||
+          status == 'cash_at_counter' ||
+          pStatus == 'CASH_AT_COUNTER' ||
+          event == 'cash_selected' ||
+          data['event'] == 'cash_selected' ||
+          (paymentMethod == 'cash' &&
+              (event == 'new-job' ||
+                  event == 'new_order' ||
+                  event == 'NEW_PRINT_JOB'))) {
+        final cashJob = PrintJob.fromJson(orderMap);
+        final bool isNew = _knownJobIds.add(cashJob.orderId);
+        setState(() {
+          _orders.removeWhere((o) => o.orderId == cashJob.orderId);
+          _orders.insert(0, cashJob);
+        });
+
+        _playPaymentPing();
+
+        final tokenSuffix =
+            cashJob.tokenCode != null && cashJob.tokenCode!.isNotEmpty
+                ? ' • Token #${cashJob.tokenCode}'
+                : '';
+
+        if (isNew) {
+          NotificationService.alertNewJob(
+            title: 'New Print Job',
+            body:
+                'Cash Order: ${cashJob.orderId}$tokenSuffix • Pay at Counter ₹${cashJob.totalAmount.toStringAsFixed(2)}',
+            payload: cashJob.orderId,
+          );
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.point_of_sale_rounded,
+                      color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Cash Order: ${cashJob.orderId}$tokenSuffix • Pay at Counter ₹${cashJob.totalAmount.toStringAsFixed(2)}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: AppColors.warningOrange,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 5. General new-job / new_order or NEW_PRINT_JOB fallback
+      if (event == 'new-job' ||
+          event == 'new_order' ||
+          event == 'NEW_PRINT_JOB') {
+        final job = PrintJob.fromJson(orderMap);
+        if (job.isPaid) {
+          _applyPaidSettlement(job);
+          return;
+        }
+        if (job.isCash || job.isPendingCash) {
+          final bool isNew = _knownJobIds.add(job.orderId);
           setState(() {
-            _orders.removeWhere((o) => o.orderId == cancelledId);
+            _orders.removeWhere((o) => o.orderId == job.orderId);
+            _orders.insert(0, job);
           });
+          _playPaymentPing();
+          if (isNew) {
+            NotificationService.alertNewJob(
+              title: 'New Print Job',
+              body:
+                  'Order #${job.orderId} • ${job.totalPages} pages • ₹${job.totalAmount.toStringAsFixed(2)}',
+              payload: job.orderId,
+            );
+          }
+          return;
         }
       }
     } catch (e) {
@@ -666,7 +1130,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _handlePrintOrder(PrintJob job) async {
-    if (!job.isPaid || _printingOrders.contains(job.orderId)) return;
+    if (_printingOrders.contains(job.orderId)) return;
+
+    if (!job.isPaid) {
+      if (job.isUpi) {
+        await _verifyOrderPayment(job);
+        final idx = _orders.indexWhere((o) => o.orderId == job.orderId);
+        if (idx >= 0 && _orders[idx].isPaid) {
+          job = _orders[idx];
+        } else {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (!mounted) return;
 
     setState(() {
       _printingOrders.add(job.orderId);
@@ -683,6 +1163,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
 
       if (printed) {
+        _completedOrderIds.add(job.orderId);
+        _unprintedPaidOrderIds.remove(job.orderId);
         final bool needsCount = _settledOrderIds.add(job.orderId);
         setState(() {
           _orders.removeWhere((o) => o.orderId == job.orderId);
@@ -691,29 +1173,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
           }
         });
 
-        ScaffoldMessenger.of(context).clearSnackBars();
+        // Update History screen in real time with local device persistence
+        final completedJob = job.copyWith(
+          status: 'completed',
+          paymentStatus: 'COMPLETED',
+          paidAt: job.paidAt ?? DateTime.now().toIso8601String(),
+        );
+        unawaited(OrderHistoryService.recordOrder(widget.vendorId, completedJob));
+        if (!mounted) return;
+        _historyScreenKey.currentState?.recordCompletedJobLocally(completedJob);
+
+        final bool autoDeleted = job.autoDeleteAfterPrint || job.isPrivate;
+        if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.check_circle_rounded,
-                    color: Colors.white, size: 20),
+                Icon(
+                  autoDeleted ? Icons.shield_rounded : Icons.check_circle_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Printing ${job.orderId} (${job.totalPages} pages) • Sent to printer',
+                    autoDeleted
+                        ? 'Printing ${job.orderId} • Customer requested instant deletion: document deleted from device.'
+                        : 'Printing ${job.orderId} (${job.totalPages} pages) • Sent to printer',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
               ],
             ),
-            backgroundColor: AppColors.primaryPurple,
+            backgroundColor:
+                autoDeleted ? const Color(0xFF0D9488) : AppColors.primaryPurple,
             behavior: SnackBarBehavior.floating,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             duration: const Duration(seconds: 4),
           ),
         );
+      } else {
+        setState(() {
+          _unprintedPaidOrderIds.add(job.orderId);
+          final notPrintedJob = job.copyWith(
+            status: 'paid_not_printed',
+            paymentStatus: 'PAID',
+          );
+          final idx = _orders.indexWhere((o) => o.orderId == job.orderId);
+          if (idx >= 0) {
+            _orders[idx] = notPrintedJob;
+          }
+        });
       }
     } finally {
       if (mounted) {
@@ -721,6 +1234,387 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _printingOrders.remove(job.orderId);
         });
       }
+    }
+  }
+
+  Future<void> _handleConfirmCashAndPrint(PrintJob job) async {
+    final orderId = job.orderId;
+    if (_printingOrders.contains(orderId)) return;
+
+    setState(() {
+      _printingOrders.add(orderId);
+    });
+
+    try {
+      final client = widget.testHttpClient ?? http.Client();
+      final bool ownsClient = widget.testHttpClient == null;
+      PrintJob paidJob = job.copyWith(
+        status: 'paid',
+        paymentMethod: 'cash',
+        paidAt: DateTime.now().toIso8601String(),
+      );
+
+      try {
+        final response = await client.post(
+          ApiConfig.confirmCashUri(orderId),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'confirmed_by': 'vendor'}),
+        ).timeout(const Duration(seconds: 4));
+
+        if (response.statusCode == 200) {
+          final dynamic data = jsonDecode(response.body);
+          if (data is Map && data['order'] is Map) {
+            paidJob = PrintJob.fromJson(
+                Map<String, dynamic>.from(data['order'] as Map));
+          } else if (data is Map && data['order_id'] != null) {
+            paidJob = PrintJob.fromJson(Map<String, dynamic>.from(data));
+          }
+        }
+      } catch (e) {
+        debugPrint('Warning: Cash confirmation network error: $e');
+      } finally {
+        if (ownsClient) client.close();
+      }
+
+      if (!mounted) return;
+
+      // Update session total earnings and order state locally
+      _applyPaidSettlement(paidJob);
+
+      // Immediately launch Android Print Spooler preview in one tap
+      final bool printed = await handlePrintOrder(
+        context,
+        paidJob,
+        httpClient: widget.testHttpClient,
+        printExecutor: widget.testPrintExecutor,
+      );
+
+      if (!mounted) return;
+
+      if (printed) {
+        _completedOrderIds.add(paidJob.orderId);
+        _unprintedPaidOrderIds.remove(paidJob.orderId);
+        final bool needsCount = _settledOrderIds.add(paidJob.orderId);
+        setState(() {
+          _orders.removeWhere((o) => o.orderId == paidJob.orderId);
+          if (needsCount) {
+            _completedJobsCount++;
+          }
+        });
+
+        final completedJob = paidJob.copyWith(
+          status: 'completed',
+          paymentStatus: 'COMPLETED',
+          paidAt: paidJob.paidAt ?? DateTime.now().toIso8601String(),
+        );
+        unawaited(OrderHistoryService.recordOrder(widget.vendorId, completedJob));
+        if (!mounted) return;
+        _historyScreenKey.currentState?.recordCompletedJobLocally(completedJob);
+
+        final bool autoDeleted = paidJob.autoDeleteAfterPrint || paidJob.isPrivate;
+        if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  autoDeleted
+                      ? Icons.shield_rounded
+                      : Icons.check_circle_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    autoDeleted
+                        ? 'Printing ${paidJob.orderId} • Customer requested instant deletion: document deleted from device.'
+                        : 'Printing ${paidJob.orderId} (${paidJob.totalPages} pages) • Sent to printer',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor:
+                autoDeleted ? const Color(0xFF0D9488) : AppColors.primaryPurple,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        setState(() {
+          _unprintedPaidOrderIds.add(paidJob.orderId);
+          final notPrintedJob = paidJob.copyWith(
+            status: 'paid_not_printed',
+            paymentStatus: 'PAID',
+          );
+          final idx = _orders.indexWhere((o) => o.orderId == paidJob.orderId);
+          if (idx >= 0) {
+            _orders[idx] = notPrintedJob;
+          }
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printingOrders.remove(orderId);
+        });
+      }
+    }
+  }
+
+  Future<void> _handleVerifyPaymentAndPrint(PrintJob job) async {
+    final orderId = job.orderId;
+    if (_printingOrders.contains(orderId)) return;
+
+    setState(() {
+      _printingOrders.add(orderId);
+    });
+
+    try {
+      final client = widget.testHttpClient ?? http.Client();
+      final bool ownsClient = widget.testHttpClient == null;
+      PrintJob paidJob = job.copyWith(
+        status: 'paid',
+        paymentStatus: 'PAID',
+        paidAt: DateTime.now().toIso8601String(),
+      );
+
+      try {
+        final response = await client.post(
+          ApiConfig.verifyJobPaymentUri(orderId),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'approved': true, 'verified_by': 'vendor_dashboard'}),
+        ).timeout(const Duration(seconds: 4));
+
+        if (response.statusCode == 200) {
+          final dynamic data = jsonDecode(response.body);
+          if (data is Map && data['order'] is Map) {
+            paidJob = PrintJob.fromJson(
+                Map<String, dynamic>.from(data['order'] as Map));
+          } else if (data is Map && data['order_id'] != null) {
+            paidJob = PrintJob.fromJson(Map<String, dynamic>.from(data));
+          }
+        }
+      } catch (e) {
+        debugPrint('Warning: Payment verification network error: $e');
+      } finally {
+        if (ownsClient) client.close();
+      }
+
+      if (!mounted) return;
+
+      // Update session total earnings and order state locally
+      _applyPaidSettlement(paidJob);
+
+      // Immediately launch Android Print Spooler preview in one tap
+      final bool printed = await handlePrintOrder(
+        context,
+        paidJob,
+        httpClient: widget.testHttpClient,
+        printExecutor: widget.testPrintExecutor,
+      );
+
+      if (!mounted) return;
+
+      if (printed) {
+        _completedOrderIds.add(paidJob.orderId);
+        _unprintedPaidOrderIds.remove(paidJob.orderId);
+        final bool needsCount = _settledOrderIds.add(paidJob.orderId);
+        setState(() {
+          _orders.removeWhere((o) => o.orderId == paidJob.orderId);
+          if (needsCount) {
+            _completedJobsCount++;
+          }
+        });
+
+        final completedJob = paidJob.copyWith(
+          status: 'completed',
+          paymentStatus: 'COMPLETED',
+          paidAt: paidJob.paidAt ?? DateTime.now().toIso8601String(),
+        );
+        unawaited(OrderHistoryService.recordOrder(widget.vendorId, completedJob));
+        if (!mounted) return;
+        _historyScreenKey.currentState?.recordCompletedJobLocally(completedJob);
+
+        final bool autoDeleted = paidJob.autoDeleteAfterPrint || paidJob.isPrivate;
+        if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  autoDeleted
+                      ? Icons.shield_rounded
+                      : Icons.check_circle_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    autoDeleted
+                        ? 'Payment Verified & Printed ${paidJob.orderId} • Sensitive file deleted.'
+                        : 'Payment Verified & Spooled ${paidJob.orderId}.',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.successGreen,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        setState(() {
+          _unprintedPaidOrderIds.add(paidJob.orderId);
+          final notPrintedJob = paidJob.copyWith(
+            status: 'paid_not_printed',
+            paymentStatus: 'PAID',
+          );
+          final idx = _orders.indexWhere((o) => o.orderId == paidJob.orderId);
+          if (idx >= 0) {
+            _orders[idx] = notPrintedJob;
+          }
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printingOrders.remove(job.orderId);
+        });
+      }
+    }
+  }
+
+  Future<void> _markOrderCompleted(PrintJob job) async {
+    final orderId = job.orderId;
+    if (_printingOrders.contains(orderId)) return;
+
+    setState(() {
+      _printingOrders.add(orderId);
+    });
+
+    try {
+      final client = widget.testHttpClient ?? http.Client();
+      final bool ownsClient = widget.testHttpClient == null;
+      try {
+        final statusUri = ApiConfig.updateOrderStatusUri(orderId);
+        await client.post(
+          statusUri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'status': 'completed'}),
+        ).timeout(const Duration(seconds: 4));
+      } catch (e) {
+        debugPrint('Failed to broadcast completed status to backend: $e');
+      } finally {
+        if (ownsClient) client.close();
+      }
+
+      final completedJob = job.copyWith(
+        status: 'completed',
+        paymentStatus: 'COMPLETED',
+        paidAt: job.paidAt ?? DateTime.now().toIso8601String(),
+      );
+
+      _completedOrderIds.add(orderId);
+      _unprintedPaidOrderIds.remove(orderId);
+      final bool needsCount = _settledOrderIds.add(orderId);
+      setState(() {
+        _orders.removeWhere((o) => o.orderId == orderId);
+        if (needsCount) {
+          _completedJobsCount++;
+        }
+      });
+
+      unawaited(OrderHistoryService.recordOrder(widget.vendorId, completedJob));
+      if (!mounted) return;
+      _historyScreenKey.currentState?.recordCompletedJobLocally(completedJob);
+
+      if (job.autoDeleteAfterPrint || job.isPrivate) {
+        try {
+          final ordersDir = await getOrdersDirectory();
+          final localFile = File('${ordersDir.path}/$orderId.pdf');
+          if (localFile.existsSync()) {
+            localFile.deleteSync();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded,
+                  color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Order $orderId marked as completed.',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.successGreen,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _printingOrders.remove(orderId);
+        });
+      }
+    }
+  }
+
+  Future<void> _handleRejectPayment(PrintJob job) async {
+    final orderId = job.orderId;
+    final client = widget.testHttpClient ?? http.Client();
+    final bool ownsClient = widget.testHttpClient == null;
+    try {
+      await client.post(
+        ApiConfig.verifyJobPaymentUri(orderId),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'approved': false, 'verified_by': 'vendor_dashboard'}),
+      ).timeout(const Duration(seconds: 4));
+
+      setState(() {
+        final idx = _orders.indexWhere((o) => o.orderId == orderId);
+        if (idx != -1) {
+          _orders[idx] = _orders[idx].copyWith(paymentStatus: 'REJECTED');
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment claim rejected for ${job.orderId}'),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error rejecting payment: $e');
+    } finally {
+      if (ownsClient) client.close();
     }
   }
 
@@ -1235,12 +2129,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
 
     if (confirmed == true) {
+      if (!mounted) return;
+
+      // 1. Dismiss any active SnackBars so no floating dependent widgets remain
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+
+      // 2. Perform background sign-out & credential clearing
+      await GoogleAuthService.signOut();
       final prefs = await SharedPreferences.getInstance();
       await prefs.clear();
 
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AuthScreen()),
+
+      // 3. Ensure the dialog's reverse transition (320ms) has fully finished
+      // so all dialog Elements and InheritedTheme dependents are cleanly unmounted
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      if (!mounted) return;
+
+      // 4. Update top-level declarative auth state
+      activeVendorIdNotifier.value = null;
+      activeShopUrlNotifier.value = '';
+
+      // 5. Cleanly reset root navigator to AuthScreen with zero orphaned dependents
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => const AuthScreen(key: ValueKey('auth_screen')),
+        ),
+        (route) => false,
       );
     }
   }
@@ -1619,14 +2536,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ).animate().fadeIn(duration: 400.ms, delay: 300.ms).slideY(begin: 0.1, end: 0),
-
-          const SizedBox(height: 12),
-
-          // Daily B&W vs. Color Page Breakdown
-          PageBreakdownRow(
-            bwPages: _bwPagesPrinted,
-            colorPages: _colorPagesPrinted,
-          ),
         ],
       ),
     ),
@@ -1813,8 +2722,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     itemBuilder: (context, index) {
                       final job = _orders[index];
                       final isCancelling = _cancellingOrders.contains(job.orderId);
-                      final isVerifying = _verifyingOrders.contains(job.orderId);
                       final bool isPaid = job.isPaid;
+                      final bool isNotPrinted =
+                          job.isNotPrinted || _unprintedPaidOrderIds.contains(job.orderId);
+                      final bool isPreparing =
+                          _printingOrders.contains(job.orderId);
+
+                      // Resolve primary action styling and callbacks
+                      final List<Color> primaryGradientColors;
+                      final Color primaryShadowColor;
+                      final IconData primaryIconData;
+                      final String primaryLabel;
+                      final VoidCallback? onPrimaryAction;
+
+                      if (job.isPaymentClaimed) {
+                        primaryGradientColors = const [
+                          Color(0xFF10B981),
+                          Color(0xFF059669),
+                        ];
+                        primaryShadowColor = const Color(0xFF10B981);
+                        primaryIconData = Icons.verified_rounded;
+                        primaryLabel = isPreparing
+                            ? 'PREPARING...'
+                            : 'VERIFY & PRINT';
+                        onPrimaryAction = isPreparing
+                            ? null
+                            : () => _handleVerifyPaymentAndPrint(job);
+                      } else if (isPaid ||
+                          (!job.isCash && !job.isCashAtCounter)) {
+                        primaryGradientColors = const [
+                          AppColors.primaryPurple,
+                          AppColors.activePurple,
+                        ];
+                        primaryShadowColor = AppColors.primaryPurple;
+                        primaryIconData = Icons.print_rounded;
+                        primaryLabel = isPreparing
+                            ? 'PREPARING...'
+                            : (isNotPrinted ? 'Retry Print' : 'PRINT');
+                        onPrimaryAction = isPreparing
+                            ? null
+                            : () => _handlePrintOrder(job);
+                      } else {
+                        primaryGradientColors = const [
+                          Color(0xFFF59E0B),
+                          Color(0xFFD97706),
+                        ];
+                        primaryShadowColor = const Color(0xFFF59E0B);
+                        primaryIconData = Icons.verified_rounded;
+                        primaryLabel = isPreparing
+                            ? 'PREPARING...'
+                            : 'Verify & Print';
+                        onPrimaryAction = isPreparing
+                            ? null
+                            : () => _handleConfirmCashAndPrint(job);
+                      }
 
                       return GlassContainer(
                         borderRadius: 22,
@@ -1906,11 +2867,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                           ],
                                         ),
                                       ),
+                                      if (job.autoDeleteAfterPrint || job.isPrivate)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF10B981)
+                                                .withValues(alpha: 0.14),
+                                            borderRadius:
+                                                BorderRadius.circular(9999),
+                                            border: Border.all(
+                                              color: const Color(0xFF10B981)
+                                                  .withValues(alpha: 0.35),
+                                            ),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: const [
+                                              Icon(
+                                                Icons.shield_outlined,
+                                                size: 11,
+                                                color: Color(0xFF10B981),
+                                              ),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Auto-Delete After Print',
+                                                style: TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Color(0xFF10B981),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                if (isPaid)
+                                if (isNotPrinted)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF59E0B)
+                                          .withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(9999),
+                                      border: Border.all(
+                                        color: const Color(0xFFF59E0B)
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: const [
+                                        Icon(
+                                          Icons.warning_amber_rounded,
+                                          size: 14,
+                                          color: Color(0xFFD97706),
+                                        ),
+                                        SizedBox(width: 5),
+                                        Text(
+                                          'PAID • Ready to Print',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w800,
+                                            color: Color(0xFFD97706),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else if (isPaid)
                                   Container(
                                     padding: const EdgeInsets.symmetric(
                                         horizontal: 10, vertical: 5),
@@ -1943,53 +2971,112 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ],
                                     ),
                                   )
-                                else
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 9, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.warningOrange
-                                              .withValues(alpha: 0.14),
-                                          borderRadius:
-                                              BorderRadius.circular(9999),
-                                          border: Border.all(
-                                            color: AppColors.warningOrange
-                                                .withValues(alpha: 0.4),
+                                else if (job.isPaymentClaimed)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF59E0B)
+                                          .withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(9999),
+                                      border: Border.all(
+                                        color: const Color(0xFFF59E0B)
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.account_balance_wallet_rounded,
+                                          size: 14,
+                                          color: Color(0xFFD97706),
+                                        ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          job.utrNumber != null &&
+                                                  job.utrNumber!.isNotEmpty
+                                              ? 'PAYMENT CLAIMED • ₹${job.totalAmount.toStringAsFixed(2)} (#${job.utrNumber})'
+                                              : 'PAYMENT CLAIMED • ₹${job.totalAmount.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w800,
+                                            color: Color(0xFFD97706),
                                           ),
                                         ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(
-                                              Icons.lock_clock_rounded,
-                                              size: 13,
-                                              color: AppColors.warningOrange,
-                                            ),
-                                            SizedBox(width: 4),
-                                            Text(
-                                              'Awaiting Payment',
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                                color: AppColors.warningOrange,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else if (job.isCashAtCounter ||
+                                    job.isCash ||
+                                    job.isPendingCash)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.warningOrange
+                                          .withValues(alpha: 0.14),
+                                      borderRadius: BorderRadius.circular(9999),
+                                      border: Border.all(
+                                        color: AppColors.warningOrange
+                                            .withValues(alpha: 0.4),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        '₹${job.totalAmount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w800,
-                                          color: AppColors.primaryPurple,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.point_of_sale_rounded,
+                                          size: 14,
+                                          color: AppColors.warningOrange,
                                         ),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          job.tokenCode != null &&
+                                                  job.tokenCode!.isNotEmpty
+                                              ? 'Cash at Counter • ₹${job.totalAmount.toStringAsFixed(2)} (#${job.tokenCode})'
+                                              : 'Cash at Counter • ₹${job.totalAmount.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppColors.warningOrange,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 5),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.warningOrange
+                                          .withValues(alpha: 0.14),
+                                      borderRadius: BorderRadius.circular(9999),
+                                      border: Border.all(
+                                        color: AppColors.warningOrange
+                                            .withValues(alpha: 0.4),
                                       ),
-                                    ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.lock_clock_rounded,
+                                          size: 13,
+                                          color: AppColors.warningOrange,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'Awaiting Payment • ₹${job.totalAmount.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                            color: AppColors.warningOrange,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                               ],
                             ),
@@ -2181,205 +3268,156 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                             const SizedBox(height: 16),
 
-                            // Action Buttons: Cancel & Print (Locked while unpaid)
+                            // Action Buttons: Balanced 50/50 Row with matching 44px height and pill borders
                             Row(
                               children: [
-                                // Cancel Pill Button
+                                // Secondary Action: "Mark Completed" (when paid) or "Cancel" / "Reject"
                                 Expanded(
-                                  child: OutlinedButton(
-                                    onPressed: isCancelling
-                                        ? null
-                                        : () => _cancelOrder(job),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: AppColors.dangerRed,
-                                      side: BorderSide(
-                                        color: AppColors.dangerRed
-                                            .withValues(alpha: 0.4),
+                                  child: SizedBox(
+                                    height: 44,
+                                    child: OutlinedButton.icon(
+                                      onPressed: isCancelling
+                                          ? null
+                                          : () {
+                                              if (isPaid) {
+                                                _markOrderCompleted(job);
+                                              } else if (job.isPaymentClaimed) {
+                                                _handleRejectPayment(job);
+                                              } else {
+                                                _cancelOrder(job);
+                                              }
+                                            },
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: isPaid
+                                            ? AppColors.successGreen
+                                            : AppColors.dangerRed,
+                                        side: BorderSide(
+                                          color: (isPaid
+                                                  ? AppColors.successGreen
+                                                  : AppColors.dangerRed)
+                                              .withValues(alpha: 0.45),
+                                          width: 1.2,
+                                        ),
+                                        backgroundColor: (isPaid
+                                                ? AppColors.successGreen
+                                                : AppColors.dangerRed)
+                                            .withValues(alpha: 0.08),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(9999),
+                                        ),
                                       ),
-                                      backgroundColor: AppColors.dangerRed
-                                          .withValues(alpha: 0.06),
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 12),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(9999),
+                                      icon: isCancelling
+                                          ? SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                        Color>(
+                                                  isPaid
+                                                      ? AppColors.successGreen
+                                                      : AppColors.dangerRed,
+                                                ),
+                                              ),
+                                            )
+                                          : Icon(
+                                              isPaid
+                                                  ? Icons.check_circle_outline_rounded
+                                                  : Icons.close_rounded,
+                                              size: 16,
+                                            ),
+                                      label: Text(
+                                        isCancelling
+                                            ? 'Updating...'
+                                            : (isPaid
+                                                ? 'Mark Completed'
+                                                : (job.isPaymentClaimed
+                                                    ? 'REJECT'
+                                                    : 'Cancel')),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        softWrap: false,
+                                        style: const TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.2,
+                                        ),
                                       ),
                                     ),
-                                    child: isCancelling
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor:
-                                                  AlwaysStoppedAnimation<Color>(
-                                                      AppColors.dangerRed),
-                                            ),
-                                          )
-                                        : const Text(
-                                            'CANCEL',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.3,
-                                            ),
-                                          ),
                                   ),
                                 ),
-                                const SizedBox(width: 12),
-                                // Print Pill Button (Locked until paid)
+                                const SizedBox(width: 10),
+                                // Primary Action: "Print" / "Retry Print" / "Verify & Print"
                                 Expanded(
-                                  flex: 2,
-                                  child: isPaid
-                                      ? Container(
-                                          decoration: BoxDecoration(
+                                  child: SizedBox(
+                                    height: 44,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius:
+                                            BorderRadius.circular(9999),
+                                        gradient: LinearGradient(
+                                          colors: primaryGradientColors,
+                                        ),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: primaryShadowColor
+                                                .withValues(alpha: 0.32),
+                                            blurRadius: 12,
+                                            offset: const Offset(0, 3),
+                                          ),
+                                        ],
+                                      ),
+                                      child: ElevatedButton.icon(
+                                        onPressed: onPrimaryAction,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.transparent,
+                                          shadowColor: Colors.transparent,
+                                          disabledBackgroundColor:
+                                              Colors.transparent,
+                                          disabledForegroundColor: Colors.white
+                                              .withValues(alpha: 0.75),
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 10),
+                                          shape: RoundedRectangleBorder(
                                             borderRadius:
                                                 BorderRadius.circular(9999),
-                                            gradient: const LinearGradient(
-                                              colors: [
-                                                AppColors.primaryPurple,
-                                                AppColors.activePurple,
-                                              ],
-                                            ),
-                                            boxShadow: [
-                                              BoxShadow(
-                                                color: AppColors.primaryPurple
-                                                    .withValues(alpha: 0.35),
-                                                blurRadius: 16,
-                                                offset: const Offset(0, 4),
-                                              ),
-                                            ],
-                                          ),
-                                          child: ElevatedButton.icon(
-                                            onPressed: _printingOrders
-                                                    .contains(job.orderId)
-                                                ? null
-                                                : () => _handlePrintOrder(job),
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor:
-                                                  Colors.transparent,
-                                              shadowColor: Colors.transparent,
-                                              disabledBackgroundColor:
-                                                  Colors.transparent,
-                                              disabledForegroundColor:
-                                                  Colors.white
-                                                      .withValues(alpha: 0.75),
-                                              foregroundColor: Colors.white,
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                      vertical: 12),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(9999),
-                                              ),
-                                            ),
-                                            icon: _printingOrders
-                                                    .contains(job.orderId)
-                                                ? const SizedBox(
-                                                    width: 16,
-                                                    height: 16,
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                      strokeWidth: 2,
-                                                      valueColor:
-                                                          AlwaysStoppedAnimation<
-                                                                  Color>(
-                                                              Colors.white),
-                                                    ),
-                                                  )
-                                                : const Icon(
-                                                    Icons.print_rounded,
-                                                    size: 18),
-                                            label: Text(
-                                              _printingOrders
-                                                      .contains(job.orderId)
-                                                  ? 'PREPARING...'
-                                                  : 'PRINT',
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: 0.3,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                      : ElevatedButton.icon(
-                                          onPressed: null,
-                                          style: ElevatedButton.styleFrom(
-                                            disabledBackgroundColor:
-                                                palette.subtlePillBg,
-                                            disabledForegroundColor:
-                                                secondaryTextColor,
-                                            elevation: 0,
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(9999),
-                                              side: BorderSide(
-                                                color: palette.subtlePillBorder,
-                                              ),
-                                            ),
-                                          ),
-                                          icon: const Icon(Icons.lock_rounded,
-                                              size: 16),
-                                          label: const Text(
-                                            'LOCKED',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                              letterSpacing: 0.3,
-                                            ),
                                           ),
                                         ),
+                                        icon: isPreparing
+                                            ? const SizedBox(
+                                                width: 14,
+                                                height: 14,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                          Color>(Colors.white),
+                                                ),
+                                              )
+                                            : Icon(primaryIconData, size: 16),
+                                        label: Text(
+                                          primaryLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          softWrap: false,
+                                          style: const TextStyle(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.2,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                            if (!isPaid) ...[
-                              const SizedBox(height: 10),
-                              SizedBox(
-                                width: double.infinity,
-                                child: TextButton.icon(
-                                  onPressed: isVerifying
-                                      ? null
-                                      : () => _verifyOrderPayment(job),
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: AppColors.successGreen,
-                                    backgroundColor: AppColors.successGreen
-                                        .withValues(alpha: 0.1),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 10),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(9999),
-                                      side: BorderSide(
-                                        color: AppColors.successGreen
-                                            .withValues(alpha: 0.3),
-                                      ),
-                                    ),
-                                  ),
-                                  icon: isVerifying
-                                      ? const SizedBox(
-                                          width: 15,
-                                          height: 15,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor:
-                                                AlwaysStoppedAnimation<Color>(
-                                                    AppColors.successGreen),
-                                          ),
-                                        )
-                                      : const Icon(Icons.check_circle_outline_rounded,
-                                          size: 17),
-                                  label: const Text(
-                                    'Confirm Manual Payment',
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         ),
                       );
@@ -2610,16 +3648,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Icon(Icons.dns_rounded, size: 20, color: AppColors.primaryPurple),
-                    const SizedBox(width: 10),
-                    Text(
-                      'Network & Host Configuration',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: primaryTextColor,
-                      ),
+                    Row(
+                      children: [
+                        const Icon(Icons.dns_rounded, size: 20, color: AppColors.primaryPurple),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Network & Host Configuration',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: primaryTextColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      tooltip: 'Auto-detect local server',
+                      icon: _isAutoDetectingServer
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple),
+                            )
+                          : const Icon(Icons.wifi_find_rounded, size: 20, color: AppColors.primaryPurple),
+                      onPressed: _isAutoDetectingServer ? null : _handleAutoDetectServer,
                     ),
                   ],
                 ),
@@ -2630,20 +3684,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Text('API Server Host', style: TextStyle(color: secondaryTextColor, fontSize: 13)),
                     const SizedBox(width: 8),
                     Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: palette.subtlePillBg,
-                          borderRadius: BorderRadius.circular(9999),
-                        ),
-                        child: const Text(
-                          ApiConfig.restBaseUrl,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primaryPurple,
+                      child: GestureDetector(
+                        onTap: _showEditHostDialog,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: palette.subtlePillBg,
+                            borderRadius: BorderRadius.circular(9999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  ApiConfig.restBaseUrl,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primaryPurple,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.edit_rounded, size: 12, color: AppColors.primaryPurple),
+                            ],
                           ),
                         ),
                       ),
@@ -2673,37 +3739,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('UPI VPA (Settlement)', style: TextStyle(color: secondaryTextColor, fontSize: 13)),
-                    GestureDetector(
-                      onTap: _showEditUpiDialog,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.successGreen.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(9999),
-                          border: Border.all(
-                            color: AppColors.successGreen.withValues(alpha: 0.3),
+                    Expanded(
+                      child: Text(
+                        'UPI VPA (Settlement)',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: secondaryTextColor, fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: GestureDetector(
+                        onTap: _showEditUpiDialog,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.successGreen.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(9999),
+                            border: Border.all(
+                              color: AppColors.successGreen.withValues(alpha: 0.3),
+                            ),
                           ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _vendorUpiId,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontFamily: 'monospace',
-                                fontWeight: FontWeight.w600,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  _vendorUpiId,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontFamily: 'monospace',
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.successGreen,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              const Icon(
+                                Icons.edit_rounded,
+                                size: 13,
                                 color: AppColors.successGreen,
                               ),
-                            ),
-                            const SizedBox(width: 5),
-                            const Icon(
-                              Icons.edit_rounded,
-                              size: 13,
-                              color: AppColors.successGreen,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -2909,6 +3989,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 setState(() {
                   _currentTabIndex = index;
                 });
+                if (index == 2) {
+                  _historyScreenKey.currentState?.fetchHistory();
+                }
               }
             },
             children: [
@@ -2919,6 +4002,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _KeepAliveTab(
                 key: const PageStorageKey<String>('dashboard_queue_tab'),
                 child: _buildQueueTab(context),
+              ),
+              _KeepAliveTab(
+                key: const PageStorageKey<String>('dashboard_history_tab'),
+                child: HistoryScreen(
+                  key: _historyScreenKey,
+                  vendorId: widget.vendorId,
+                  testHttpClient: widget.testHttpClient,
+                  testPrintExecutor: widget.testPrintExecutor,
+                ),
               ),
               _KeepAliveTab(
                 key: const PageStorageKey<String>('dashboard_profile_tab'),
@@ -2948,16 +4040,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
         !_pageController.position.hasViewportDimension) {
       return;
     }
-    // 1 tab width (trackWidth / 3.0) corresponds to 1.0 page step for 1:1 pill tracking.
+    // 1 tab width (trackWidth / 4.0) corresponds to 1.0 page step for 1:1 pill tracking.
     final double deltaPage =
-        (details.primaryDelta ?? 0.0) / (trackWidth / 3.0);
-    final double newPage = (_currentPageValue + deltaPage).clamp(0.0, 2.0);
+        (details.primaryDelta ?? 0.0) / (trackWidth / 4.0);
+    final double newPage = (_currentPageValue + deltaPage).clamp(0.0, 3.0);
     _pageController.jumpTo(
       newPage * _pageController.position.viewportDimension,
     );
   }
 
-  void _snapDockToPage({double velocity = 0.0, int maxIndex = 2}) {
+  void _snapDockToPage({double velocity = 0.0, int maxIndex = 3}) {
     if (!_pageController.hasClients) return;
     final int targetPage;
     if (velocity.abs() > 280.0) {
@@ -2979,6 +4071,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final List<Map<String, dynamic>> tabs = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
       {'icon': Icons.receipt_long_rounded, 'label': 'Queue'},
+      {'icon': Icons.history_rounded, 'label': 'History'},
       {'icon': Icons.person_rounded, 'label': 'Profile'},
     ];
 
@@ -3033,9 +4126,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: ValueListenableBuilder<double>(
                         valueListenable: _pageValueNotifier,
                         builder: (context, pageValue, _) {
-                          // Map page [0.0..2.0] to alignment [-1.0..1.0].
-                          final double alignmentX =
-                              (pageValue - 1.0).clamp(-1.0, 1.0);
+                          // Map page [0.0..(tabs.length - 1)] to alignment [-1.0..1.0].
+                          final double alignmentX = tabs.length > 1
+                              ? ((pageValue / (tabs.length - 1)) * 2.0 - 1.0)
+                                  .clamp(-1.0, 1.0)
+                              : 0.0;
 
                           return Stack(
                             children: [
@@ -3043,7 +4138,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               Align(
                                 alignment: Alignment(alignmentX, 0.0),
                                 child: FractionallySizedBox(
-                                  widthFactor: 1 / 3,
+                                  widthFactor: 1 / tabs.length,
                                   heightFactor: 1.0,
                                   child: Container(
                                     decoration: BoxDecoration(
@@ -3064,7 +4159,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                 ),
                               ),
-                              // 3 Equal Stacked Tab Items
+                              // Equal Stacked Tab Items
                               Row(
                                 children: List.generate(tabs.length, (index) {
                                   final double proximity =

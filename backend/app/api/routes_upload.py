@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from PIL import Image, ImageOps
 from pypdf import PdfReader, PdfWriter
 import pymupdf
+from app.core.network import get_base_url
 from app.core.pricing import build_upi_uri, compute_order_amount
 from app.core.pdf_processor import build_print_ready_pdf, parse_page_range
 from app.api.routes_vendor import get_vendor_profile, manager
@@ -22,10 +23,7 @@ router = APIRouter()
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-DEFAULT_HOST_URL = (
-    os.getenv("API_BASE_URL")
-    or os.getenv("SHOP_BASE_URL", "http://192.168.1.41:8000")
-).rstrip("/")
+DEFAULT_HOST_URL = get_base_url()
 
 # Persistent order store across server reloads
 ORDERS_FILE = os.path.abspath(
@@ -62,6 +60,7 @@ async def batch_upload_documents(
     is_color: bool = Form(default=False),
     page_range: Optional[str] = Form(default="all"),
     orientation: Optional[str] = Form(default="portrait"),
+    auto_delete_after_print: Optional[bool] = Form(default=False),
     items_config: Optional[str] = Form(default=None),
 ):
     if not files:
@@ -225,6 +224,13 @@ async def batch_upload_documents(
         transaction_ref=transaction_ref,
     )
 
+    auto_delete_flag = False
+    if auto_delete_after_print is not None:
+        if isinstance(auto_delete_after_print, bool):
+            auto_delete_flag = auto_delete_after_print
+        elif isinstance(auto_delete_after_print, str):
+            auto_delete_flag = auto_delete_after_print.strip().lower() in ("true", "1", "yes")
+
     # Store order info for order lifecycle, UPI verification, and cancellation
     ORDERS[order_id] = {
         "order_id": order_id,
@@ -238,33 +244,17 @@ async def batch_upload_documents(
         "color_mode": "color" if has_color else "bw",
         "page_range": (page_range or "all").strip() or "all",
         "orientation": primary_orientation,
+        "auto_delete_after_print": auto_delete_flag,
         "download_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/download",
         "print_ready_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/print-ready",
         "transaction_ref": transaction_ref,
         "upi_uri": upi_uri,
         "created_at": datetime.now(),
-        "status": "pending_payment",
+        "status": "awaiting_payment",
+        "locked_amount": total_amount,
+        "cart_invalidated": False,
     }
     save_orders_to_disk()
-
-    # Broadcast job payload to vendor's live WebSocket connection ONLY
-    payload = {
-        "event": "NEW_PRINT_JOB",
-        "order_id": order_id,
-        "vendor_id": clean_vendor_id,
-        "timestamp": datetime.now().strftime("%I:%M %p"),
-        "status": "pending_payment",
-        "total_amount": total_amount,
-        "total_pages": total_pages,
-        "copies": total_copies,
-        "color_mode": "color" if has_color else "bw",
-        "page_range": (page_range or "all").strip() or "all",
-        "orientation": primary_orientation,
-        "download_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/download",
-        "print_ready_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/print-ready",
-        "documents": processed_files,
-    }
-    await manager.broadcast_to_vendor(clean_vendor_id, payload)
 
     return {
         "order_id": order_id,
@@ -276,11 +266,14 @@ async def batch_upload_documents(
         "color_mode": "color" if has_color else "bw",
         "page_range": (page_range or "all").strip() or "all",
         "orientation": primary_orientation,
+        "auto_delete_after_print": auto_delete_flag,
         "download_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/download",
         "print_ready_url": f"{DEFAULT_HOST_URL}/api/documents/{order_id}/print-ready",
         "transaction_ref": transaction_ref,
         "upi_uri": upi_uri,
-        "status": "pending_payment",
+        "status": "awaiting_payment",
+        "locked_amount": total_amount,
+        "cart_invalidated": False,
     }
 
 
@@ -322,9 +315,10 @@ def delete_order_files(order_id: str, order: Optional[dict] = None) -> List[str]
 
 
 @router.post("/orders/{order_id}/cancel")
+@router.post("/orders/{order_id}/invalidate")
 async def cancel_order(order_id: str):
     """
-    Cancels an order and permanently deletes order-related files matching {order_id}_* from disk.
+    Cancels an order, marks cart_invalidated=True, and permanently deletes order-related files matching {order_id}_* from disk.
     Broadcasts the cancellation event to the vendor's active WebSocket connection.
     """
     order = ORDERS.get(order_id)
@@ -332,6 +326,7 @@ async def cancel_order(order_id: str):
     deleted_files = delete_order_files(order_id, order)
     if order:
         order["status"] = "cancelled"
+        order["cart_invalidated"] = True
         save_orders_to_disk()
 
     if not order and not deleted_files:

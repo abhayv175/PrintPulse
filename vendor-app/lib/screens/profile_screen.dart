@@ -338,3 +338,267 @@ class _PrintPricingCardState extends State<PrintPricingCard> {
     );
   }
 }
+
+
+/// VendorUpiCard provides an in-app viewer and editor for the vendor's UPI ID (VPA),
+/// synced live with the backend via PATCH /api/vendors/{vendor_id}/upi.
+class VendorUpiCard extends StatefulWidget {
+  final String vendorId;
+  final http.Client? httpClient;
+  final void Function(String newUpi)? onUpiUpdated;
+
+  const VendorUpiCard({
+    super.key,
+    required this.vendorId,
+    this.httpClient,
+    this.onUpiUpdated,
+  });
+
+  @override
+  State<VendorUpiCard> createState() => _VendorUpiCardState();
+}
+
+class _VendorUpiCardState extends State<VendorUpiCard> {
+  final TextEditingController _upiController =
+      TextEditingController(text: 'shop@okaxis');
+  bool _isSaving = false;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUpi();
+  }
+
+  @override
+  void dispose() {
+    _upiController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadUpi() async {
+    setState(() => _isLoading = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cached = prefs.getString('upi_id');
+      if (cached != null && cached.isNotEmpty && mounted) {
+        _upiController.text = cached;
+      }
+    } catch (_) {}
+
+    final client = widget.httpClient ?? http.Client();
+    final bool ownsClient = widget.httpClient == null;
+    try {
+      final res = await client
+          .get(ApiConfig.vendorProfileUri(widget.vendorId))
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200 && mounted) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        final upi = data['upi_id']?.toString();
+        if (upi != null && upi.isNotEmpty) {
+          _upiController.text = upi;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('upi_id', upi);
+        }
+      }
+    } catch (_) {
+    } finally {
+      if (ownsClient) client.close();
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveUpi() async {
+    final upi = _upiController.text.trim();
+    if (upi.isEmpty || !upi.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid UPI VPA (e.g. shop@okaxis)'),
+          backgroundColor: AppColors.dangerRed,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    final client = widget.httpClient ?? http.Client();
+    final bool ownsClient = widget.httpClient == null;
+
+    try {
+      final res = await client
+          .patch(
+            ApiConfig.patchVendorUpiUri(widget.vendorId),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'upi_id': upi}),
+          )
+          .timeout(const Duration(seconds: 4));
+
+      if (res.statusCode == 200) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('upi_id', upi);
+        widget.onUpiUpdated?.call(upi);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle_rounded,
+                      color: Colors.white, size: 20),
+                  const SizedBox(width: 10),
+                  Text('UPI VPA updated: $upi'),
+                ],
+              ),
+              backgroundColor: AppColors.successGreen,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update UPI ID (${res.statusCode})'),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving UPI ID: $e'),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (ownsClient) client.close();
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryTextColor = isDark ? Colors.white : AppColors.lightTextPrimary;
+    final secondaryTextColor =
+        isDark ? Colors.white70 : const Color(0xFF6B7280);
+
+    return GlassContainer(
+      borderRadius: 24,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      size: 20, color: AppColors.primaryPurple),
+                  const SizedBox(width: 10),
+                  Text(
+                    'UPI Settlement VPA',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: primaryTextColor,
+                    ),
+                  ),
+                ],
+              ),
+              if (_isLoading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: AppColors.primaryPurple),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Zero-fee settlements are paid directly to this UPI address.',
+            style: TextStyle(fontSize: 12, color: secondaryTextColor),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _upiController,
+            keyboardType: TextInputType.emailAddress,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: primaryTextColor,
+              fontFamily: 'monospace',
+            ),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.alternate_email_rounded,
+                  size: 18, color: AppColors.primaryPurple),
+              hintText: 'shop@okaxis',
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              filled: true,
+              fillColor: isDark
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : const Color(0xFFF9FAFB),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : const Color(0xFFE5E7EB),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : const Color(0xFFE5E7EB),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(
+                    color: AppColors.primaryPurple, width: 1.8),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isSaving ? null : _saveUpi,
+              icon: _isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.check_rounded, size: 18),
+              label: Text(_isSaving ? 'Updating...' : 'Save UPI ID'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primaryPurple,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+                textStyle:
+                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

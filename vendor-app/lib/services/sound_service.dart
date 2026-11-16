@@ -4,7 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// SoundService handles audible notification chimes when new paid orders arrive.
-/// Synthesizes a clean 16-bit PCM WAV chime in memory with zero external asset dependencies.
+/// Synthesizes a clean 16-bit PCM WAV chime in memory with zero external asset dependencies,
+/// playing crisp notification audio via AudioPlayer and system alerts.
 class SoundService {
   static AudioPlayer? _audioPlayer;
   static Uint8List? _cachedChimeWav;
@@ -81,22 +82,26 @@ class SoundService {
     return byteData.buffer.asUint8List();
   }
 
-  /// Plays incoming order chime with haptic and system sound fallbacks.
+  /// Plays incoming order chime with AudioPlayer, haptic feedback, and system alert.
   static Future<void> playOrderChime() async {
-    // 1. Immediate haptic & system feedback
+    // 1. Immediate tactile and system alert feedback
     try {
       HapticFeedback.mediumImpact().catchError((_) {});
-      SystemSound.play(SystemSoundType.click).catchError((_) {});
+      SystemSound.play(SystemSoundType.alert).catchError((_) {});
     } catch (_) {}
 
     if (!enabled) return;
 
-    // 2. High-fidelity audio chime playback
+    // 2. High-fidelity audio chime playback via AudioPlayer (audioplayers ^6.1.0)
     try {
-      _cachedChimeWav ??= generateChimeWav();
       _audioPlayer ??= AudioPlayer();
       await _audioPlayer!.stop();
-      await _audioPlayer!.play(BytesSource(_cachedChimeWav!));
+      try {
+        await _audioPlayer!.play(AssetSource('sounds/new_job.mp3'));
+      } catch (_) {
+        _cachedChimeWav ??= generateChimeWav();
+        await _audioPlayer!.play(BytesSource(_cachedChimeWav!));
+      }
     } catch (e) {
       debugPrint('SoundService audio playback fallback: $e');
     }

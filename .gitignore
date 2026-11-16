@@ -48,3 +48,18 @@ bin/
 .DS_Store
 .vscode/
 .idea/
+node_modules/
+
+
+# -----------------------------------------------------------------------------
+# Keystore & Android Signing Secrets
+# -----------------------------------------------------------------------------
+*.jks
+*.keystore
+key.properties
+**/android/key.properties
+
+# -----------------------------------------------------------------------------
+# Gitignored Mobile Client Credentials (Protected from secret scanning)
+# -----------------------------------------------------------------------------
+vendor-app/lib/config/google_auth_config.dart

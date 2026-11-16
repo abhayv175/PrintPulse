@@ -1,9 +1,12 @@
 import base64
+import hashlib
 import json
 import os
+import re
 from typing import Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
+from app.core.network import get_base_url
 from app.api.routes_vendor import (
     DEFAULT_VENDOR_NAME,
     DEFAULT_VENDOR_UPI_ID,
@@ -13,8 +16,11 @@ from app.api.routes_vendor import (
 
 router = APIRouter()
 
-DEFAULT_SHOP_BASE_URL = os.getenv("SHOP_BASE_URL", "http://192.168.1.41:8000").rstrip("/")
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+DEFAULT_SHOP_BASE_URL = get_base_url()
+
+
+def get_google_web_client_id() -> Optional[str]:
+    return os.getenv("GOOGLE_WEB_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
 
 
 class GoogleAuthRequest(BaseModel):
@@ -25,41 +31,70 @@ class GoogleAuthRequest(BaseModel):
 
 def generate_vendor_id(email: str, sub: Optional[str] = None) -> str:
     """
-    Derives a deterministic, URL-safe vendor_id directly from the sanitized email prefix.
+    Derives a deterministic, URL-safe vendor_id directly from the verified email prefix
+    or Google sub claim, ensuring unique multi-vendor namespaces.
     """
-    del sub
+    if email and "@" in email:
+        handle = email.strip().lower().split("@")[0].strip()
+        sanitized = re.sub(r"[^a-z0-9_-]+", "_", handle).strip("_")
+        if sanitized:
+            return sanitized
+    if sub and sub.strip():
+        sanitized_sub = re.sub(r"[^a-z0-9_-]+", "", sub.strip().lower())
+        if sanitized_sub:
+            return f"vendor_{sanitized_sub[:12]}"
     return generate_vendor_id_from_email(email)
 
 
-def extract_email_from_jwt_payload(token_str: str) -> Optional[dict]:
-    """Helper to inspect unverified JWT claims for mock/test environments."""
+async def upsert_vendor_in_db(vendor_record: dict) -> None:
+    """
+    Upsert hook for MongoDB via Prisma (or persistent store).
+    Gracefully falls back if Prisma/MongoDB is not yet running in the environment.
+    """
     try:
-        parts = token_str.split(".")
-        if len(parts) >= 2:
-            payload_b64 = parts[1]
-            rem = len(payload_b64) % 4
-            if rem > 0:
-                payload_b64 += "=" * (4 - rem)
-            decoded_bytes = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
-            data = json.loads(decoded_bytes.decode("utf-8"))
-            if isinstance(data, dict):
-                return data
+        from prisma import Prisma
+        db = Prisma()
+        if not db.is_connected():
+            await db.connect()
+        await db.vendor.upsert(
+            where={"email": vendor_record["email"]},
+            data={
+                "create": {
+                    "vendorId": vendor_record["vendor_id"],
+                    "googleSub": str(vendor_record.get("google_sub") or ""),
+                    "email": vendor_record["email"],
+                    "name": vendor_record.get("name") or "",
+                    "shopName": vendor_record.get("shop_name") or "",
+                    "picture": vendor_record.get("picture") or "",
+                    "sessionToken": vendor_record.get("session_token") or "",
+                },
+                "update": {
+                    "googleSub": str(vendor_record.get("google_sub") or ""),
+                    "name": vendor_record.get("name") or "",
+                    "picture": vendor_record.get("picture") or "",
+                    "sessionToken": vendor_record.get("session_token") or "",
+                },
+            },
+        )
     except Exception:
+        # In-memory VENDORS registry serves as canonical storage
         pass
-    return None
 
 
 @router.post("/google")
-async def verify_google_auth(payload: GoogleAuthRequest):
+async def verify_google_auth(payload: GoogleAuthRequest, request: Request):
     """
     Verifies the shopkeeper's Google login token and returns vendor credentials.
     Uses google.oauth2.id_token.verify_oauth2_token for production verification,
     deriving a sanitized URL-safe vendor_id directly from the account email prefix,
+    upserting the vendor profile in MongoDB / in-memory store,
     while maintaining mock token bypass (e.g. 'mock_token_<email>', 'mock_google_token') for test environments.
     """
     token = payload.id_token or payload.token
     email = payload.email
     sub = None
+    name = None
+    picture = ""
 
     if not token and not email:
         raise HTTPException(
@@ -86,6 +121,7 @@ async def verify_google_auth(payload: GoogleAuthRequest):
             if "@" in mock_email:
                 email = mock_email
             sub = f"sub_{email or 'mock'}"
+            name = (email.split("@")[0].replace("_", " ").title()) if email else "PrintPulse Vendor"
         elif any(valid in token_str.lower() for valid in ["mock_google_token", "mock_valid_token", "mock_token", "test_token"]):
             is_mock = True
             if not email and payload.email:
@@ -93,6 +129,7 @@ async def verify_google_auth(payload: GoogleAuthRequest):
             if not email:
                 email = "shopkeeper@gmail.com"
             sub = f"sub_{email}"
+            name = "Shopkeeper"
 
     # 2. Production Google OAuth ID token verification via google-auth library
     if not is_mock:
@@ -105,12 +142,16 @@ async def verify_google_auth(payload: GoogleAuthRequest):
             from google.oauth2 import id_token
             from google.auth.transport import requests as google_requests
 
+            client_id = get_google_web_client_id()
             request_adapter = google_requests.Request()
             idinfo = id_token.verify_oauth2_token(
-                token, request_adapter, audience=GOOGLE_CLIENT_ID
+                token, request_adapter, audience=client_id
             )
             email = idinfo.get("email")
             sub = idinfo.get("sub")
+            name = idinfo.get("name") or idinfo.get("given_name") or "PrintPulse Vendor"
+            picture = idinfo.get("picture") or ""
+
             if not email:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -138,26 +179,67 @@ async def verify_google_auth(payload: GoogleAuthRequest):
     cleaned_email = email.strip().lower()
     vendor_id = generate_vendor_id(cleaned_email, sub=sub)
     existing = VENDORS.get(vendor_id, {})
+    is_onboarded = bool(existing.get("onboarded") or existing.get("onboarding_completed"))
     upi_id = existing.get("upi_id") or DEFAULT_VENDOR_UPI_ID
-    vendor_name = existing.get("vendor_name") or DEFAULT_VENDOR_NAME
+    vendor_name = name or existing.get("vendor_name") or existing.get("name") or DEFAULT_VENDOR_NAME
+    shop_name = existing.get("shop_name") or f"{vendor_name}'s Print Shop"
+    bw_price = float(existing.get("bw_price", 2.0))
+    color_price = float(existing.get("color_price", 10.0))
+    session_token = f"pp_sess_{hashlib.sha256((str(sub or '') + cleaned_email).encode('utf-8')).hexdigest()}"
 
-    # Register/update vendor in registry while preserving configured UPI VPA
-    VENDORS[vendor_id] = {
+    # Upsert vendor record in registry while preserving configured UPI VPA and pricing
+    vendor_record = {
         **existing,
         "vendor_id": vendor_id,
-        "email": cleaned_email,
+        "google_sub": sub,
         "sub": sub,
-        "upi_id": upi_id,
+        "email": cleaned_email,
+        "name": vendor_name,
         "vendor_name": vendor_name,
+        "shop_name": shop_name,
+        "picture": picture,
+        "upi_id": upi_id,
+        "bw_price": bw_price,
+        "color_price": color_price,
+        "onboarded": is_onboarded,
+        "onboarding_completed": is_onboarded,
+        "session_token": session_token,
+        "status": "authenticated",
     }
+    VENDORS[vendor_id] = vendor_record
 
-    shop_url = f"{DEFAULT_SHOP_BASE_URL}/shop/{vendor_id}"
+    # Asynchronously attempt MongoDB upsert via Prisma if configured
+    await upsert_vendor_in_db(vendor_record)
+
+    shop_url = f"{get_base_url(request)}/shop/{vendor_id}"
 
     return {
         "status": "authenticated",
         "vendor_id": vendor_id,
         "email": cleaned_email,
-        "upi_id": upi_id,
+        "name": vendor_name,
         "vendor_name": vendor_name,
+        "shop_name": shop_name,
+        "picture": picture,
+        "upi_id": upi_id,
+        "bw_price": bw_price,
+        "color_price": color_price,
+        "onboarded": is_onboarded,
+        "onboarding_completed": is_onboarded,
+        "session_token": session_token,
         "shop_url": shop_url,
+        "vendor": {
+            "vendor_id": vendor_id,
+            "google_sub": sub,
+            "email": cleaned_email,
+            "name": vendor_name,
+            "vendor_name": vendor_name,
+            "shop_name": shop_name,
+            "picture": picture,
+            "upi_id": upi_id,
+            "bw_price": bw_price,
+            "color_price": color_price,
+            "onboarded": is_onboarded,
+            "onboarding_completed": is_onboarded,
+        },
     }

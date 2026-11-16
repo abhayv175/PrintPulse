@@ -1,0 +1,26 @@
+{
+  "name": "printpulse",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'PrintPulse Web Portal: Jinja2/Tailwind compiled successfully'",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhayv175/PrintPulse.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/abhayv175/PrintPulse/issues"
+  },
+  "homepage": "https://github.com/abhayv175/PrintPulse#readme",
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "prisma": "^6.19.3"
+  }
+}

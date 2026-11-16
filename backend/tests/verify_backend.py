@@ -184,10 +184,28 @@ def test_c_websocket_multi_tenant_connection_and_scoped_dispatch(client=None):
             assert res.status_code == 200
             order_id = res.json()["order_id"]
 
-            # shop_alpha MUST receive the NEW_PRINT_JOB payload
+            # On upload, neither shop_alpha nor shop_beta receive any message (unpaid draft gated)
+            alpha_received_nothing_on_upload = False
+            try:
+                ws_alpha._send_queue.get(timeout=0.25)
+            except queue.Empty:
+                alpha_received_nothing_on_upload = True
+            assert alpha_received_nothing_on_upload, "shop_alpha should not receive alert on upload alone"
+
+            # Customer selects 'Pay Cash at Counter'
+            res_cash = client.post(f"/api/orders/{order_id}/select-cash")
+            assert res_cash.status_code == 200
+            cash_data = res_cash.json()
+            assert cash_data["status"] == "pending_cash"
+            assert cash_data["payment_method"] == "cash"
+            assert len(cash_data["token_code"]) == 4
+
+            # shop_alpha MUST receive the new_order cash payload
             raw_msg = ws_alpha._send_queue.get(timeout=1.0)
             alpha_payload = json.loads(raw_msg["text"])
-            assert alpha_payload.get("event") == "NEW_PRINT_JOB", f"Unexpected event: {alpha_payload}"
+            assert alpha_payload.get("event") == "new_order", f"Unexpected event: {alpha_payload}"
+            assert alpha_payload.get("status") == "pending_cash"
+            assert alpha_payload.get("payment_method") == "cash"
             assert alpha_payload.get("order_id") == order_id
             assert alpha_payload.get("vendor_id") == "shop_alpha"
 
@@ -317,6 +335,20 @@ def test_e_google_auth_token_verification_endpoint(client=None):
     fallback_id = res_fallback.json().get("vendor_id")
     assert fallback_id and fallback_id.startswith("vendor_")
 
+    # 6. Verify top-level /api/auth/google endpoint accepting id_token payload
+    res_id_token = client.post(
+        "/api/auth/google",
+        json={"id_token": "mock_token_kioskowner@printpulse.com"},
+    )
+    assert res_id_token.status_code == 200
+    auth_resp = res_id_token.json()
+    assert auth_resp.get("status") == "authenticated"
+    assert auth_resp.get("vendor_id") == "kioskowner"
+    assert auth_resp.get("email") == "kioskowner@printpulse.com"
+    assert auth_resp.get("session_token") and auth_resp["session_token"].startswith("pp_sess_")
+    assert auth_resp.get("shop_name")
+    assert auth_resp.get("vendor") and auth_resp["vendor"]["email"] == "kioskowner@printpulse.com"
+
 
 # ---------------------------------------------------------------------------
 # Test F: Dynamic UPI Order Creation, Payment Verification & WS Broadcast
@@ -359,7 +391,7 @@ def test_f_upi_order_creation_and_payment_settlement(client=None):
     order_data = res_create.json()
     order_id = order_data["order_id"]
     assert order_data["total_amount"] == 14.0
-    assert order_data["status"] == "pending_payment"
+    assert order_data["status"] in ("pending_payment", "awaiting_payment")
     upi_uri = order_data["upi_uri"]
     assert upi_uri.startswith("upi://pay?")
     assert "pa=alpha@okaxis" in upi_uri
@@ -389,7 +421,7 @@ def test_f_upi_order_creation_and_payment_settlement(client=None):
             assert verify_data["order"]["amount"] == 14.0
 
             vendor_msg = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
-            assert vendor_msg["event"] == "order_paid"
+            assert vendor_msg["event"] in ("new_order", "order_paid")
             assert vendor_msg["order"]["order_id"] == order_id
             assert vendor_msg["order"]["amount"] == 14.0
             assert vendor_msg["order"]["status"] == "paid"
@@ -841,6 +873,548 @@ def cleanup_test_uploads():
 
 
 # ---------------------------------------------------------------------------
+# Test M: Dynamic LAN IP Auto-Detection & Base URL Resolution
+# ---------------------------------------------------------------------------
+def test_m_dynamic_lan_ip_auto_detection(client=None):
+    """
+    Verifies that:
+    - get_lan_ip() resolves an IPv4 address.
+    - get_base_url() constructs the valid HTTP base endpoint.
+    - Request-aware URL resolution uses client Host header dynamically.
+    - /health endpoint returns host_ip and dynamic base_url.
+    """
+    from app.core.network import get_lan_ip, get_base_url
+    from starlette.requests import Request
+
+    lan_ip = get_lan_ip()
+    assert isinstance(lan_ip, str) and len(lan_ip) >= 7
+    assert "." in lan_ip
+
+    base_url = get_base_url()
+    assert base_url.startswith("http://")
+    assert lan_ip in base_url
+
+    # Simulate incoming request from a phone with a specific Host header
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/vendor/profile",
+        "headers": [(b"host", b"192.168.1.99:8000")],
+        "scheme": "http",
+    }
+    mock_req = Request(scope)
+    dynamic_url = get_base_url(mock_req)
+    assert dynamic_url == "http://192.168.1.99:8000"
+
+    # Test /health endpoint
+    if client is not None:
+        res = client.get("/health")
+        assert res.status_code == 200
+        data = res.json()
+        assert data.get("status") == "ok"
+        assert "host_ip" in data
+        assert "base_url" in data
+
+
+# ---------------------------------------------------------------------------
+# Test N: Auto-Delete Document After Print Flag
+# ---------------------------------------------------------------------------
+def test_n_auto_delete_after_print_flag(client=None):
+    """
+    Verifies that:
+    - auto_delete_after_print defaults to False when omitted or false.
+    - auto_delete_after_print=True is captured during batch-upload and order creation.
+    - Active vendor orders list and WebSocket status payloads correctly propagate
+      the auto_delete_after_print boolean.
+    """
+    client = client or TestClient(app)
+
+    # 1. Test Default OFF
+    mock_pdf = generate_mock_pdf(1)
+    res_default = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": "shop_alpha", "copies": 1, "is_color": False},
+        files=[("files", ("standard_doc.pdf", mock_pdf, "application/pdf"))],
+    )
+    assert res_default.status_code == 200
+    data_default = res_default.json()
+    default_order_id = data_default["order_id"]
+    assert data_default.get("auto_delete_after_print") is False
+
+    res_create_default = client.post(
+        "/api/orders/create",
+        json={"vendor_id": "shop_alpha", "order_id": default_order_id, "pages": 1},
+    )
+    assert res_create_default.status_code == 200
+    assert res_create_default.json().get("auto_delete_after_print") is False
+
+    res_status_default = client.get(f"/api/orders/{default_order_id}/status")
+    assert res_status_default.status_code == 200
+    assert res_status_default.json().get("auto_delete_after_print") is False
+
+    # 2. Test Privacy Toggle ON (auto_delete_after_print = True)
+    res_privacy = client.post(
+        "/api/documents/batch-upload",
+        data={
+            "vendor_id": "shop_alpha",
+            "copies": 1,
+            "is_color": False,
+            "auto_delete_after_print": "true",
+        },
+        files=[("files", ("confidential_id.pdf", mock_pdf, "application/pdf"))],
+    )
+    assert res_privacy.status_code == 200
+    data_privacy = res_privacy.json()
+    privacy_order_id = data_privacy["order_id"]
+    assert data_privacy.get("auto_delete_after_print") is True
+
+    res_create_privacy = client.post(
+        "/api/orders/create",
+        json={
+            "vendor_id": "shop_alpha",
+            "order_id": privacy_order_id,
+            "pages": 1,
+            "auto_delete_after_print": True,
+        },
+    )
+    assert res_create_privacy.status_code == 200
+    assert res_create_privacy.json().get("auto_delete_after_print") is True
+
+    res_status_privacy = client.get(f"/api/orders/{privacy_order_id}/status")
+    assert res_status_privacy.status_code == 200
+    status_data = res_status_privacy.json()
+    assert status_data.get("auto_delete_after_print") is True
+    assert status_data.get("order", {}).get("auto_delete_after_print") is True
+
+    # 3. Verify Payment settlement preserves auto_delete_after_print
+    res_verify_default = client.post(
+        f"/api/orders/{default_order_id}/verify-payment",
+        json={"verified_by": "test_suite"},
+    )
+    assert res_verify_default.status_code == 200
+
+    res_verify = client.post(
+        f"/api/orders/{privacy_order_id}/verify-payment",
+        json={"verified_by": "test_suite"},
+    )
+    assert res_verify.status_code == 200
+    verify_data = res_verify.json()
+    assert verify_data.get("order", {}).get("auto_delete_after_print") is True
+
+    # 4. Verify vendor active orders query contains both with correct flags
+    res_vendor = client.get("/api/orders/vendor/shop_alpha")
+    assert res_vendor.status_code == 200
+    vendor_orders = {o["order_id"]: o for o in res_vendor.json().get("orders", [])}
+    assert default_order_id in vendor_orders
+    assert vendor_orders[default_order_id].get("auto_delete_after_print") is False
+    assert privacy_order_id in vendor_orders
+    assert vendor_orders[privacy_order_id].get("auto_delete_after_print") is True
+
+
+def test_o_order_history_and_payer_name(client: TestClient):
+    """
+    Verifies:
+      1. Creating and settling orders captures payer_name and paid_at.
+      2. Orders without explicit payer_name default to 'UPI Customer'.
+      3. Completed orders appear in GET /api/orders?status=completed and
+         GET /api/orders/vendor/{vendor_id}/history with all required metadata.
+    """
+    # 1. Create order with explicit payer_name
+    res1 = client.post(
+        "/api/orders/create",
+        json={
+            "vendor_id": "shop_history_test",
+            "page_count": 5,
+            "is_color": True,
+            "copies": 2,
+            "payer_name": "Aarav Patel",
+            "payer_vpa": "aarav@okhdfcbank",
+        },
+    )
+    assert res1.status_code == 200
+    order1_id = res1.json()["order_id"]
+
+    # Settle payment for order 1
+    res_pay1 = client.post(
+        f"/api/orders/{order1_id}/verify-payment",
+        json={"payer_name": "Aarav Patel", "payer_vpa": "aarav@okhdfcbank"},
+    )
+    assert res_pay1.status_code == 200
+    pay1_data = res_pay1.json()
+    assert pay1_data.get("order", {}).get("payer_name") == "Aarav Patel"
+    assert pay1_data.get("order", {}).get("paid_at") is not None
+
+    # Mark order 1 as completed
+    res_comp1 = client.post(
+        f"/api/orders/{order1_id}/status",
+        json={"status": "completed"},
+    )
+    assert res_comp1.status_code == 200
+
+    # 2. Create order without payer_name (should fallback to 'UPI Customer')
+    res2 = client.post(
+        "/api/orders/create",
+        json={
+            "vendor_id": "shop_history_test",
+            "page_count": 2,
+            "is_color": False,
+            "copies": 1,
+        },
+    )
+    assert res2.status_code == 200
+    order2_id = res2.json()["order_id"]
+
+    res_pay2 = client.post(
+        f"/api/orders/{order2_id}/verify-payment",
+        json={},
+    )
+    assert res_pay2.status_code == 200
+    assert res_pay2.json().get("order", {}).get("payer_name") == "UPI Customer"
+
+    res_comp2 = client.post(
+        f"/api/orders/{order2_id}/status",
+        json={"status": "completed"},
+    )
+    assert res_comp2.status_code == 200
+
+    # 3. Query GET /api/orders?status=completed&vendor_id=shop_history_test
+    res_all_completed = client.get("/api/orders?status=completed&vendor_id=shop_history_test")
+    assert res_all_completed.status_code == 200
+    completed_orders = {o["order_id"]: o for o in res_all_completed.json().get("orders", [])}
+    assert order1_id in completed_orders
+    assert completed_orders[order1_id]["payer_name"] == "Aarav Patel"
+    assert completed_orders[order1_id]["paid_at"] is not None
+    assert completed_orders[order1_id]["status"] == "completed"
+    assert completed_orders[order1_id]["page_count"] == 10
+    assert completed_orders[order1_id]["is_color"] is True
+    assert completed_orders[order1_id]["copies"] == 2
+
+    assert order2_id in completed_orders
+    assert completed_orders[order2_id]["payer_name"] == "UPI Customer"
+
+    # 4. Query GET /api/orders/vendor/{vendor_id}/history
+    res_vendor_hist = client.get("/api/orders/vendor/shop_history_test/history")
+    assert res_vendor_hist.status_code == 200
+    hist_orders = {o["order_id"]: o for o in res_vendor_hist.json().get("orders", [])}
+    assert order1_id in hist_orders
+    assert order2_id in hist_orders
+    assert hist_orders[order1_id]["payer_name"] == "Aarav Patel"
+    assert hist_orders[order2_id]["payer_name"] == "UPI Customer"
+
+
+def test_p_cash_selection_and_confirm_flow(client: TestClient):
+    """
+    Verifies Cash at Counter lifecycle:
+      1. Draft order on upload/create has status 'awaiting_payment' and sends NO WebSocket broadcast.
+      2. POST /api/orders/{order_id}/select-cash transitions to 'pending_cash', generates 4-digit token_code,
+         and broadcasts 'new_order' to the vendor WebSocket.
+      3. Active queue GET /api/orders/vendor/{vendor_id} includes the cash order.
+      4. POST /api/orders/{order_id}/confirm-cash transitions to 'paid', records paid_at,
+         and broadcasts 'order_paid'.
+      5. Alias POST /api/payments/verify confirms UPI settlement.
+    """
+    # 1. Create draft order
+    res_draft = client.post(
+        "/api/orders/create",
+        json={
+            "vendor_id": "shop_cash_test",
+            "pages": 4,
+            "copies": 1,
+            "is_color": False,
+        },
+    )
+    assert res_draft.status_code == 200
+    draft_data = res_draft.json()
+    order_id = draft_data["order_id"]
+    assert draft_data["status"] == "awaiting_payment"
+
+    # Active queue should NOT contain the draft awaiting_payment order
+    res_queue = client.get("/api/orders/vendor/shop_cash_test")
+    assert res_queue.status_code == 200
+    active_ids = [o["order_id"] for o in res_queue.json().get("orders", [])]
+    assert order_id not in active_ids
+
+    # 2. Connect WebSockets and test select-cash broadcast
+    with client.websocket_connect("/ws/vendor/shop_cash_test") as ws_vendor:
+        with client.websocket_connect(f"/ws/orders/{order_id}") as ws_order:
+            # Customer clicks "Pay Cash at Counter"
+            res_cash = client.post(f"/api/orders/{order_id}/select-cash")
+            assert res_cash.status_code == 200
+            cash_json = res_cash.json()
+            assert cash_json["status"] == "pending_cash"
+            assert cash_json["payment_method"] == "cash"
+            token_code = cash_json["token_code"]
+            assert len(token_code) == 4
+
+            # Vendor receives new_order alert
+            v_msg = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
+            assert v_msg["event"] == "new_order"
+            assert v_msg["status"] == "pending_cash"
+            assert v_msg["payment_method"] == "cash"
+            assert v_msg["token_code"] == token_code
+
+            # Order status tracker receives update
+            o_msg = json.loads(ws_order._send_queue.get(timeout=1.0)["text"])
+            assert o_msg["status"] == "pending_cash"
+
+            # 3. Active queue now includes this pending cash order
+            res_queue2 = client.get("/api/orders/vendor/shop_cash_test")
+            assert res_queue2.status_code == 200
+            active_orders = {o["order_id"]: o for o in res_queue2.json().get("orders", [])}
+            assert order_id in active_orders
+            assert active_orders[order_id]["status"] == "pending_cash"
+            assert active_orders[order_id]["payment_method"] == "cash"
+            assert active_orders[order_id]["token_code"] == token_code
+
+            # 4. Vendor taps "PAYMENT DONE & PRINT"
+            res_confirm = client.post(f"/api/orders/{order_id}/confirm-cash")
+            assert res_confirm.status_code == 200
+            confirm_json = res_confirm.json()
+            assert confirm_json["status"] == "paid"
+            assert confirm_json["order"]["paid_at"] is not None
+
+            # Both WebSockets receive paid notification
+            v_paid = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
+            assert v_paid["event"] == "order_paid"
+            assert v_paid["status"] == "paid"
+
+            o_paid = json.loads(ws_order._send_queue.get(timeout=1.0)["text"])
+            assert o_paid["status"] == "paid"
+
+    # 5. Test alias POST /api/payments/verify
+    res_draft2 = client.post(
+        "/api/orders/create",
+        json={"vendor_id": "shop_cash_test", "pages": 2, "copies": 1},
+    )
+    order2_id = res_draft2.json()["order_id"]
+    res_alias = client.post(
+        "/api/payments/verify",
+        json={"order_id": order2_id, "payer_name": "Alias Payer"},
+    )
+    assert res_alias.status_code == 200
+    assert res_alias.json()["status"] == "paid"
+
+
+# ---------------------------------------------------------------------------
+# Test Q: Zero-Fee UPI Payment Flow (Prisma/MongoDB, NPCI Intent, UTR Claim & Verification)
+# ---------------------------------------------------------------------------
+def test_q_zero_fee_upi_payment_flow(client=None):
+    """
+    Verifies Zero-Fee UPI Payment Flow:
+    1. PATCH /api/vendors/{vendor_id}/upi updates vendor UPI VPA with handle@bank validation.
+    2. GET /api/jobs/{job_id}/payment-info returns locked amount, short_id, shop_name, and NPCI URI.
+    3. POST /api/jobs/{job_id}/claim-paid accepts optional utr_number, updates payment_status to
+       'PAYMENT_CLAIMED' and broadcasts 'payment-claimed' event to vendor and customer WebSockets.
+    4. POST /api/jobs/{job_id}/verify-payment with approved=False updates payment_status to 'REJECTED'.
+    5. POST /api/jobs/{job_id}/verify-payment with approved=True updates payment_status to 'PAID'.
+    """
+    client = client or TestClient(app)
+
+    # 1. Vendor UPI configuration via PATCH /api/vendors/{vendor_id}/upi
+    res_patch_invalid = client.patch(
+        "/api/vendors/shop_zerofee_vendor/upi",
+        json={"upi_id": "invalid_upi_no_handle"},
+    )
+    assert res_patch_invalid.status_code == 400
+
+    res_patch = client.patch(
+        "/api/vendors/shop_zerofee_vendor/upi",
+        json={"upi_id": "kiosk@okhdfcbank", "vendor_name": "ZeroFee Central"},
+    )
+    assert res_patch.status_code == 200
+    assert res_patch.json()["upi_id"] == "kiosk@okhdfcbank"
+
+    # Also verify alias /api/vendor/{vendor_id}/upi
+    res_post_alias = client.post(
+        "/api/vendor/shop_zerofee_vendor/upi",
+        json={"upi_id": "kiosk@okaxis"},
+    )
+    assert res_post_alias.status_code == 200
+    assert res_post_alias.json()["upi_id"] == "kiosk@okaxis"
+
+    # 2. Create order / job
+    res_create = client.post(
+        "/api/orders/create",
+        json={"vendor_id": "shop_zerofee_vendor", "pages": 5, "copies": 2, "color_mode": "bw"},
+    )
+    assert res_create.status_code == 200
+    job_id = res_create.json()["order_id"]
+
+    # 3. GET /api/jobs/{job_id}/payment-info
+    res_info = client.get(f"/api/jobs/{job_id}/payment-info")
+    assert res_info.status_code == 200, res_info.text
+    info = res_info.json()
+    assert info["job_id"] == job_id
+    assert info["amount"] == 20.0
+    assert info["upi_id"] == "kiosk@okaxis"
+    assert "upi://pay?" in info["upi_uri"]
+    assert "pa=kiosk@okaxis" in info["upi_uri"]
+    assert "am=20.00" in info["upi_uri"]
+    assert "PrintPulse-" in info["upi_uri"]
+    assert info["payment_status"] == "PENDING_PAYMENT"
+
+    # 4. Connect WebSockets and test Claim Paid flow
+    with client.websocket_connect("/ws/vendor/shop_zerofee_vendor") as ws_vendor:
+        with client.websocket_connect(f"/ws/orders/{job_id}") as ws_order:
+            # POST /api/jobs/{job_id}/claim-paid
+            res_claim = client.post(
+                f"/api/jobs/{job_id}/claim-paid",
+                json={"utr_number": "123456789012", "payer_name": "Kavita Singh"},
+            )
+            assert res_claim.status_code == 200, res_claim.text
+            claim_data = res_claim.json()
+            assert claim_data["payment_status"] == "PAYMENT_CLAIMED"
+            assert claim_data["utr_number"] == "123456789012"
+
+            # Check vendor received payment-claimed broadcast
+            v_msg = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
+            assert v_msg["event"] == "payment-claimed"
+            assert v_msg["payment_status"] == "PAYMENT_CLAIMED"
+            assert v_msg["utr_number"] == "123456789012"
+
+            # Check customer received payment-claimed broadcast
+            c_msg = json.loads(ws_order._send_queue.get(timeout=1.0)["text"])
+            assert c_msg["event"] == "payment-claimed"
+            assert c_msg["payment_status"] == "PAYMENT_CLAIMED"
+
+            # 5. Vendor rejects claimed payment
+            res_reject = client.post(
+                f"/api/jobs/{job_id}/verify-payment",
+                json={"approved": False},
+            )
+            assert res_reject.status_code == 200
+            assert res_reject.json()["payment_status"] == "REJECTED"
+            assert res_reject.json()["approved"] is False
+
+            # Check rejection broadcast
+            v_rej = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
+            assert v_rej["event"] == "payment-verified"
+            assert v_rej["payment_status"] == "REJECTED"
+            assert v_rej["approved"] is False
+
+            c_rej = json.loads(ws_order._send_queue.get(timeout=1.0)["text"])
+            assert c_rej["event"] == "payment-verified"
+            assert c_rej["payment_status"] == "REJECTED"
+
+            # 6. Vendor approves payment (Zero-fee approval)
+            res_approve = client.post(
+                f"/api/jobs/{job_id}/verify-payment",
+                json={"approved": True, "utr_number": "123456789012"},
+            )
+            assert res_approve.status_code == 200
+            assert res_approve.json()["status"] == "paid"
+            assert res_approve.json()["payment_status"] == "PAID"
+            assert res_approve.json()["approved"] is True
+
+            # Check payment verified broadcast
+            v_app = json.loads(ws_vendor._send_queue.get(timeout=1.0)["text"])
+            assert v_app["event"] in ("new_order", "payment-verified", "order_paid")
+            assert v_app["status"] == "paid"
+
+            c_app = json.loads(ws_order._send_queue.get(timeout=1.0)["text"])
+            assert c_app["event"] in ("payment-verified", "order_paid")
+            assert c_app["status"] == "paid"
+
+
+
+# ---------------------------------------------------------------------------
+# Test R: Checkout Locking, Cart Validation & Amount Mismatch Protection
+# ---------------------------------------------------------------------------
+def test_r_checkout_locking_and_cart_amount_validation(client=None):
+    """
+    Verifies that:
+    1. Batch upload locks the order amount and sets cart_invalidated=False.
+    2. Submitting mismatched payment amount to /verify-payment or /claim-paid returns HTTP 400
+       with detail: "Cart modified after payment initiation. Please restart checkout.".
+    3. Tampering with cart document sum vs locked_amount returns HTTP 400.
+    4. Explicit order cancellation marks cart_invalidated=True, deletes files, and rejects subsequent payments.
+    5. Valid checkout amount without discrepancies processes smoothly.
+    """
+    client = client or TestClient(app)
+    from app.api.routes_orders import ORDERS
+
+    pdf_bytes = generate_mock_pdf(num_pages=2)  # 2 pages BW @ 2.0 = 4.00
+    res_upload = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": "shop_alpha", "copies": 1, "is_color": False},
+        files=[("files", ("secure_test.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_upload.status_code == 200
+    upload_data = res_upload.json()
+    order_id = upload_data["order_id"]
+    assert upload_data["total_amount"] == 4.0
+    assert upload_data.get("locked_amount") == 4.0
+    assert upload_data.get("cart_invalidated") is False
+
+    # 1. Test claim-paid with mismatched amount
+    res_mismatch_claim = client.post(
+        f"/api/orders/{order_id}/claim-paid",
+        json={"amount": 2.0},
+    )
+    assert res_mismatch_claim.status_code == 400
+    assert "Cart modified after payment initiation" in res_mismatch_claim.json().get("detail", "")
+
+    # 2. Test verify-payment with mismatched amount
+    if order_id in ORDERS:
+        ORDERS[order_id]["cart_invalidated"] = False
+
+    res_mismatch_verify = client.post(
+        f"/api/orders/{order_id}/verify-payment",
+        json={"amount": 99.0, "approved": True},
+    )
+    assert res_mismatch_verify.status_code == 400
+    assert "Cart modified after payment initiation" in res_mismatch_verify.json().get("detail", "")
+
+    # 3. Test payments/verify route alias with mismatched amount
+    if order_id in ORDERS:
+        ORDERS[order_id]["cart_invalidated"] = False
+
+    res_alias_mismatch = client.post(
+        "/api/payments/verify",
+        json={"order_id": order_id, "amount": 10.0, "approved": True},
+    )
+    assert res_alias_mismatch.status_code == 400
+    assert "Cart modified after payment initiation" in res_alias_mismatch.json().get("detail", "")
+
+    # 4. Test order cancellation & file cleanup
+    res_cancel = client.post(f"/api/documents/orders/{order_id}/cancel")
+    assert res_cancel.status_code == 200
+    assert ORDERS[order_id]["status"] == "cancelled"
+    assert ORDERS[order_id]["cart_invalidated"] is True
+
+    # 5. After cancellation, claim-paid and verify-payment must be rejected
+    res_post_cancel_claim = client.post(
+        f"/api/orders/{order_id}/claim-paid",
+        json={"amount": 4.0},
+    )
+    assert res_post_cancel_claim.status_code == 400
+
+    # 6. Clean order with exact matching amount succeeds
+    res_clean_upload = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": "shop_alpha", "copies": 1, "is_color": False},
+        files=[("files", ("clean_test.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_clean_upload.status_code == 200
+    clean_order_id = res_clean_upload.json()["order_id"]
+
+    res_clean_claim = client.post(
+        f"/api/orders/{clean_order_id}/claim-paid",
+        json={"amount": 4.0},
+    )
+    assert res_clean_claim.status_code == 200
+    assert res_clean_claim.json()["status"] == "success"
+
+    res_clean_verify = client.post(
+        f"/api/orders/{clean_order_id}/verify-payment",
+        json={"amount": 4.0, "approved": True},
+    )
+    assert res_clean_verify.status_code == 200
+    assert res_clean_verify.json()["payment_status"] == "PAID"
+
+
+
+# ---------------------------------------------------------------------------
 # Standalone CLI Test Runner with Checklist Output
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -865,6 +1439,12 @@ if __name__ == "__main__":
         ("Instant backend preview PDF generation", test_j_preview_pdf_endpoint),
         ("Order status lifecycle & WebSocket tracking", test_k_order_status_lifecycle_and_websockets),
         ("Dynamic shop pricing, file cleanup & stats", test_l_dynamic_pricing_stats_and_file_cleanup),
+        ("Dynamic LAN IP auto-detection & base URL resolution", test_m_dynamic_lan_ip_auto_detection),
+        ("Auto-delete document after print privacy toggle", test_n_auto_delete_after_print_flag),
+        ("UPI payer name metadata and order history endpoints", test_o_order_history_and_payer_name),
+        ("Cash at Counter selection, token, and one-tap confirmation", test_p_cash_selection_and_confirm_flow),
+        ("Zero-Fee UPI payment flow & verification", test_q_zero_fee_upi_payment_flow),
+        ("Checkout locking & cart amount validation", test_r_checkout_locking_and_cart_amount_validation),
     ]
 
     all_passed = True

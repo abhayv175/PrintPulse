@@ -31,7 +31,64 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
   <!-- External Design System Styles -->
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+
+  <style>
+    /* Dedicated Robust Toggle Switch Styling */
+    .toggle-switch-container {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .toggle-switch-input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+    .toggle-switch-track {
+      width: 50px !important;
+      height: 28px !important;
+      min-width: 50px !important;
+      background-color: #cbd5e1;
+      border-radius: 9999px !important;
+      position: relative !important;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15) !important;
+      display: block !important;
+    }
+    @media (prefers-color-scheme: dark) {
+      .toggle-switch-track {
+        background-color: #334155;
+      }
+    }
+    .dark .toggle-switch-track,
+    [data-theme="dark"] .toggle-switch-track {
+      background-color: #334155;
+    }
+    .toggle-switch-track::after {
+      content: "" !important;
+      position: absolute !important;
+      top: 3px !important;
+      left: 3px !important;
+      width: 22px !important;
+      height: 22px !important;
+      background-color: #ffffff !important;
+      border-radius: 50% !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s !important;
+    }
+    .toggle-switch-input:checked + .toggle-switch-track {
+      background: linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%) !important;
+      box-shadow: 0 0 14px rgba(124, 58, 237, 0.45) !important;
+    }
+    .toggle-switch-input:checked + .toggle-switch-track::after {
+      transform: translateX(22px) !important;
+    }
+  </style>
 
   <script>
     tailwind.config = {
@@ -120,6 +177,18 @@
         <button id="clearAllBtn" type="button" class="text-xs text-rose-500 hover:text-rose-600 font-semibold hidden transition-colors">Clear All</button>
       </div>
 
+      <!-- Checkout Active / Queue Locked Notification Banner -->
+      <div id="queueLockedBanner" class="hidden w-full p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs text-amber-700 dark:text-amber-300">
+        <div class="flex items-center gap-2 min-w-0">
+          <i data-lucide="lock" class="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400"></i>
+          <span class="font-semibold truncate">Checkout active. Queue is locked to prevent amount mismatch.</span>
+        </div>
+        <button id="bannerCancelCheckoutBtn" type="button" class="shrink-0 px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 font-bold text-[11px] transition-colors flex items-center gap-1">
+          <i data-lucide="x" class="w-3 h-3"></i>
+          <span>Cancel Checkout</span>
+        </button>
+      </div>
+
       <!-- Empty State -->
       <div id="queueEmpty" class="text-center py-10 liquid-glass flex flex-col items-center justify-center gap-2">
         <div class="w-12 h-12 rounded-full bg-brand-500/10 flex items-center justify-center text-brand-500 mb-1">
@@ -160,6 +229,55 @@
         <span>Inspect Compiled Print Sheets (A4 PDF)</span>
       </button>
 
+      <!-- Customer Privacy Toggle: Auto-delete after printing -->
+      <label
+        for="autoDeleteToggle"
+        id="autoDeleteCard"
+        class="w-full liquid-glass rounded-2xl p-3.5 sm:p-4 flex items-center justify-between gap-3 border border-brand-500/20 bg-brand-500/5 my-1.5 cursor-pointer hover:border-brand-500/40 hover:bg-brand-500/10 transition-all select-none group"
+      >
+        <div class="flex items-start gap-3 flex-1 min-w-0">
+          <div id="autoDeleteIconBox" class="p-2.5 rounded-xl bg-purple-500/15 text-brand-600 dark:text-brand-400 mt-0.5 shrink-0 group-hover:scale-105 transition-all">
+            <i data-lucide="shield-alert" class="w-4 h-4 stroke-[2.2]"></i>
+          </div>
+          <div class="text-left flex-1 min-w-0">
+            <div class="text-xs sm:text-sm font-bold text-gray-900 dark:text-white leading-tight">
+              Delete document immediately after printing
+            </div>
+            <p class="text-[11px] text-gray-500 dark:text-gray-400 font-medium leading-tight mt-1">
+              Off by default — turn on for sensitive IDs or personal documents
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2.5 shrink-0" style="display: flex; align-items: center;">
+          <span
+            id="autoDeleteBadge"
+            class="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full bg-gray-200/90 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-transparent transition-all select-none"
+          >
+            OFF
+          </span>
+          <div
+            id="toggleSwitchContainer"
+            style="position: relative; width: 50px; height: 28px; min-width: 50px; min-height: 28px; display: inline-block; cursor: pointer; flex-shrink: 0;"
+          >
+            <input
+              type="checkbox"
+              id="autoDeleteToggle"
+              style="position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; margin: 0;"
+            >
+            <div
+              id="autoDeleteSwitchTrack"
+              style="width: 50px; height: 28px; min-width: 50px; background-color: #475569; border-radius: 9999px; position: relative; transition: all 0.25s ease; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); display: block;"
+            >
+              <div
+                id="autoDeleteSwitchThumb"
+                style="position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background-color: #ffffff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s;"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </label>
+
       <!-- Main Vibrant Purple CTA Pill Button -->
       <button
         id="payButton"
@@ -193,46 +311,75 @@
             <div id="upiQrCanvas" class="w-[200px] h-[200px] flex items-center justify-center"></div>
           </div>
           <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mt-1">Scan with GPay, PhonePe, Paytm or BHIM</p>
-          <p id="checkoutVpaLabel" class="text-[11px] font-mono text-gray-500 dark:text-gray-400"></p>
+          <p id="checkoutVpaLabel" class="text-[11px] font-mono text-gray-500 dark:text-gray-400 font-semibold"></p>
         </div>
 
-        <!-- Primary Mobile Intent Action -->
+        <!-- Primary Mobile Deep-link Intent Action -->
         <a
           id="upiIntentBtn"
           href="#"
           class="w-full py-4 px-6 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] hover:from-[#6D28D9] hover:to-[#5B21B6] text-white font-bold text-base tracking-wide flex items-center justify-center gap-2 shadow-lg shadow-purple-500/30 active:scale-[0.98] transition-all"
         >
           <i data-lucide="smartphone" class="w-5 h-5 stroke-[2.2]"></i>
-          <span>Pay via UPI App</span>
+          <span id="upiIntentBtnText">Pay via UPI App</span>
         </a>
 
-        <!-- Live Waiting Indicator -->
-        <div class="flex items-center justify-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-4 py-2 rounded-full border border-amber-500/20">
-          <span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-          <span>Waiting for payment confirmation...</span>
+        <!-- Primary Action Buttons: Payment Confirmation & Cash Option -->
+        <div class="w-full flex flex-col gap-2.5">
+          <!-- "Payment Done" Confirmation Button -->
+          <button
+            id="claimPaidBtn"
+            type="button"
+            class="w-full py-3.5 px-6 rounded-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] hover:from-[#6D28D9] hover:to-[#5B21B6] text-white font-bold text-sm tracking-wide flex items-center justify-center gap-2 shadow-md shadow-purple-500/25 active:scale-[0.98] transition-all"
+          >
+            <i data-lucide="check-circle-2" class="w-5 h-5 stroke-[2.2]"></i>
+            <span id="claimPaidBtnText">Payment Done</span>
+          </button>
+
+          <!-- Pay Cash at Counter Button -->
+          <button
+            id="payCashBtn"
+            type="button"
+            class="w-full py-3.5 px-6 rounded-full bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/35 text-amber-700 dark:text-amber-300 font-bold text-sm tracking-wide flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
+          >
+            <i data-lucide="banknote" class="w-5 h-5 stroke-[2.2]"></i>
+            <span>Pay Cash at Counter</span>
+          </button>
         </div>
 
-        <!-- Auxiliary Controls -->
-        <div class="w-full flex items-center justify-between gap-3 pt-2 border-t border-brand-500/15">
+        <!-- Feedback message container (if payment claim submitted or rejected) -->
+        <div id="paymentClaimFeedback" class="hidden w-full text-center text-xs font-semibold px-2"></div>
+
+        <!-- Live Waiting Indicator -->
+        <div id="paymentWaitingPill" class="flex items-center justify-center gap-2 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-4 py-2 rounded-full border border-amber-500/20">
+          <span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+          <span id="paymentWaitingPillText">Waiting for payment confirmation...</span>
+        </div>
+
+        <!-- Clear "Cancel Checkout" Button to Close Session & Unlock Queue -->
+        <div class="w-full flex justify-center pt-2 border-t border-brand-500/15">
           <button
             id="cancelCheckoutBtn"
             type="button"
-            class="flex-1 py-2.5 px-4 rounded-full text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-500/10 hover:bg-rose-500/15 transition-colors"
+            class="w-full py-2.5 px-4 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold text-xs tracking-wide flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
           >
-            Cancel Order
-          </button>
-          <button
-            id="simulatePayBtn"
-            type="button"
-            class="flex-1 py-2.5 px-4 rounded-full text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 transition-colors"
-          >
-            Simulate Test Payment
+            <i data-lucide="x-circle" class="w-4 h-4 stroke-[2]"></i>
+            <span>Cancel Checkout (Unlock Queue)</span>
           </button>
         </div>
       </div>
 
       <!-- Confirmed Paid & Live Order Status Tracker (Phase 6 Part 1) -->
       <div id="upiSuccessView" class="hidden w-full flex flex-col gap-4 py-2">
+        <!-- Cash Counter Token Code Card (Shown on Cash orders) -->
+        <div id="cashTokenCard" class="hidden w-full p-4 rounded-2xl bg-gradient-to-br from-amber-500/15 to-orange-500/10 border border-amber-500/30 flex flex-col items-center justify-center text-center shadow-sm">
+          <span class="text-[11px] font-extrabold uppercase tracking-widest text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+            <i data-lucide="ticket" class="w-3.5 h-3.5"></i>
+            <span>Counter Pickup Token</span>
+          </span>
+          <span id="cashTokenCodeText" class="text-4xl font-mono font-black tracking-widest text-amber-700 dark:text-amber-300 my-1">----</span>
+          <span class="text-xs font-medium text-gray-600 dark:text-gray-300">Show this 4-digit code & pay cash at the counter to start printing</span>
+        </div>
         <!-- Tracker Header -->
         <div class="flex items-center justify-between pb-3 border-b border-brand-500/15">
           <div class="flex items-center gap-2.5">
@@ -244,7 +391,7 @@
                 <span id="paidOrderBadge" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25"></span>
                 <span id="paidAmountBadge" class="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-brand-600/10 text-brand-700 dark:text-brand-300 border border-brand-500/20"></span>
               </div>
-              <p id="trackerHeaderSubtitle" class="text-[11px] text-gray-500 dark:text-gray-400 font-medium mt-0.5">Live Order Tracker</p>
+              <p id="trackerHeaderSubtitle" class="text-[11px] text-gray-500 dark:text-gray-400 font-medium mt-0.5">Order Status</p>
             </div>
           </div>
           <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -253,52 +400,23 @@
           </div>
         </div>
 
-        <!-- 3-Step Live Progress Indicator -->
-        <div class="w-full flex flex-col gap-0 px-2 py-1">
-          <!-- Step 1: Paid & Queued -->
-          <div class="flex items-start gap-3.5 relative">
-            <div class="flex flex-col items-center">
-              <div id="step1Indicator" class="w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300">
-                <i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>
-              </div>
-              <div id="stepLine1" class="w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500"></div>
-            </div>
-            <div class="pt-1.5">
-              <h4 id="step1Title" class="text-sm font-extrabold text-gray-900 dark:text-white leading-none">Paid & Queued</h4>
-              <p id="step1Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Payment confirmed. Order in counter queue.</p>
-            </div>
+        <!-- Single "Paid & Queued" Confirmation Card -->
+        <div id="confirmationCard" class="w-full p-4 sm:p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-start sm:items-center gap-3.5 shadow-sm">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-emerald-500/25">
+            <i data-lucide="check-circle-2" class="w-5 h-5 stroke-[2.4]"></i>
           </div>
-
-          <!-- Step 2: Printing at Counter -->
-          <div class="flex items-start gap-3.5 relative">
-            <div class="flex flex-col items-center">
-              <div id="step2Indicator" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300">
-                <i data-lucide="printer" class="w-4 h-4"></i>
-              </div>
-              <div id="stepLine2" class="w-0.5 h-10 bg-gray-200 dark:bg-white/10 my-1 transition-all duration-500"></div>
+          <div class="text-left flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <h4 id="confirmationTitle" class="text-sm sm:text-base font-extrabold text-gray-900 dark:text-white leading-tight">Paid & Queued</h4>
+              <span id="confirmationBadge" class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                Confirmed
+              </span>
             </div>
-            <div class="pt-1.5">
-              <h4 id="step2Title" class="text-sm font-bold text-gray-700 dark:text-gray-300 leading-none">Printing at Counter</h4>
-              <p id="step2Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Waiting for shopkeeper to tap Print...</p>
-            </div>
-          </div>
-
-          <!-- Step 3: Ready for Pickup -->
-          <div class="flex items-start gap-3.5 relative">
-            <div class="flex flex-col items-center">
-              <div id="step3Indicator" class="w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300">
-                <i data-lucide="package-check" class="w-4 h-4"></i>
-              </div>
-            </div>
-            <div class="pt-1.5">
-              <h4 id="step3Title" class="text-sm font-bold text-gray-700 dark:text-gray-300 leading-none">Ready for Pickup</h4>
-              <p id="step3Desc" class="text-xs text-gray-500 dark:text-gray-400 font-medium mt-1">Collect sheets once printing finishes.</p>
-            </div>
+            <p id="confirmationDesc" class="text-xs text-gray-600 dark:text-gray-300 font-medium mt-1 leading-snug">
+              Payment confirmed. Your document has been sent to the shopkeeper's print queue.
+            </p>
           </div>
         </div>
-
-        <!-- Dynamic Status Callout Banner -->
-        <div id="statusCalloutBox" class="w-full transition-all"></div>
 
         <button
           id="newOrderBtn"
@@ -371,6 +489,7 @@
 
     // Document Queue State
     let queue = [];
+    let isCheckoutLocked = false;
     const rates = {
       bw: Number({{ bw_price | default(2.0) }}),
       color: Number({{ color_price | default(10.0) }})
@@ -387,6 +506,91 @@
     const payButton = document.getElementById('payButton');
     const payButtonText = document.getElementById('payButtonText');
     const previewAllBtn = document.getElementById('previewAllBtn');
+
+    // Live visual feedback for Privacy Auto-Delete Toggle
+    const autoDeleteToggle = document.getElementById('autoDeleteToggle');
+    const autoDeleteBadge = document.getElementById('autoDeleteBadge');
+    const autoDeleteCard = document.getElementById('autoDeleteCard');
+    const autoDeleteIconBox = document.getElementById('autoDeleteIconBox');
+    const autoDeleteSwitchTrack = document.getElementById('autoDeleteSwitchTrack');
+    const autoDeleteSwitchThumb = document.getElementById('autoDeleteSwitchThumb');
+
+    function setCheckoutLocked(locked) {
+      isCheckoutLocked = locked;
+      if (fileInput) fileInput.disabled = locked;
+
+      if (dropZone) {
+        if (locked) {
+          dropZone.classList.add('opacity-40', 'pointer-events-none', 'cursor-not-allowed');
+        } else {
+          dropZone.classList.remove('opacity-40', 'pointer-events-none', 'cursor-not-allowed');
+        }
+      }
+
+      if (clearAllBtn) {
+        clearAllBtn.disabled = locked;
+        if (locked) clearAllBtn.classList.add('pointer-events-none', 'opacity-30');
+        else clearAllBtn.classList.remove('pointer-events-none', 'opacity-30');
+      }
+
+      if (autoDeleteToggle) autoDeleteToggle.disabled = locked;
+      if (autoDeleteCard) {
+        if (locked) autoDeleteCard.classList.add('pointer-events-none', 'opacity-50');
+        else autoDeleteCard.classList.remove('pointer-events-none', 'opacity-50');
+      }
+
+      if (previewAllBtn && locked) {
+        previewAllBtn.disabled = true;
+      }
+
+      const queueLockedBanner = document.getElementById('queueLockedBanner');
+      if (queueLockedBanner) {
+        if (locked) queueLockedBanner.classList.remove('hidden');
+        else queueLockedBanner.classList.add('hidden');
+      }
+
+      renderQueue();
+    }
+
+    if (autoDeleteToggle) {
+      autoDeleteToggle.addEventListener('change', () => {
+        const isChecked = autoDeleteToggle.checked;
+        if (autoDeleteBadge) {
+          if (isChecked) {
+            autoDeleteBadge.textContent = 'ON';
+            autoDeleteBadge.className = 'text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full bg-purple-500/20 text-[#7C3AED] dark:text-[#C4B5FD] border border-purple-500/40 shadow-sm transition-all select-none';
+          } else {
+            autoDeleteBadge.textContent = 'OFF';
+            autoDeleteBadge.className = 'text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full bg-gray-200/90 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-transparent transition-all select-none';
+          }
+        }
+        if (autoDeleteSwitchTrack && autoDeleteSwitchThumb) {
+          if (isChecked) {
+            autoDeleteSwitchTrack.style.background = 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)';
+            autoDeleteSwitchTrack.style.boxShadow = '0 0 14px rgba(124, 58, 237, 0.55)';
+            autoDeleteSwitchThumb.style.transform = 'translateX(22px)';
+          } else {
+            autoDeleteSwitchTrack.style.background = '#475569';
+            autoDeleteSwitchTrack.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.3)';
+            autoDeleteSwitchThumb.style.transform = 'translateX(0px)';
+          }
+        }
+        if (autoDeleteCard) {
+          if (isChecked) {
+            autoDeleteCard.classList.add('border-brand-500/50', 'bg-brand-500/10');
+          } else {
+            autoDeleteCard.classList.remove('border-brand-500/50', 'bg-brand-500/10');
+          }
+        }
+        if (autoDeleteIconBox) {
+          if (isChecked) {
+            autoDeleteIconBox.className = 'p-2.5 rounded-xl bg-purple-500/25 text-[#7C3AED] dark:text-[#C4B5FD] mt-0.5 shrink-0 scale-105 transition-all shadow-sm';
+          } else {
+            autoDeleteIconBox.className = 'p-2.5 rounded-xl bg-purple-500/15 text-brand-600 dark:text-brand-400 mt-0.5 shrink-0 group-hover:scale-105 transition-all';
+          }
+        }
+      });
+    }
 
     function formatBytes(bytes) {
       if (bytes === 0) return '0 Bytes';
@@ -412,18 +616,31 @@
     });
 
     dropZone.addEventListener('drop', (e) => {
+      if (isCheckoutLocked) {
+        e.preventDefault();
+        return;
+      }
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         handleIncomingFiles(e.dataTransfer.files);
       }
     });
 
     fileInput.addEventListener('change', (e) => {
+      if (isCheckoutLocked) {
+        fileInput.value = '';
+        return;
+      }
       if (e.target.files && e.target.files.length > 0) {
         handleIncomingFiles(e.target.files);
       }
     });
 
     async function handleIncomingFiles(fileList) {
+      if (isCheckoutLocked) {
+        alert("Checkout is currently active. Please click 'Cancel Checkout' to modify files or add documents.");
+        fileInput.value = '';
+        return;
+      }
       for (const file of Array.from(fileList)) {
         const item = {
           uid: Math.random().toString(36).substring(2, 9),
@@ -542,29 +759,34 @@
               </div>
             </div>
 
-            <button type="button" onclick="removeItem('${item.uid}')" class="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors" title="Remove document">
-              <i data-lucide="trash-2" class="w-4 h-4"></i>
-            </button>
+            ${isCheckoutLocked
+              ? `<button type="button" disabled class="w-8 h-8 rounded-full flex items-center justify-center text-gray-300 dark:text-gray-600 opacity-25 cursor-not-allowed pointer-events-none" title="Queue locked during checkout">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>`
+              : `<button type="button" onclick="removeItem('${item.uid}')" class="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors" title="Remove document">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>`
+            }
           </div>
 
           <!-- Print Controls Bar -->
           <div class="flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-brand-500/15">
             <!-- Mode Toggle Pill -->
             <div class="flex gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-full border border-brand-500/20">
-              <button type="button" onclick="setMode('${item.uid}', false)" class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${!item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+              <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="setMode('${item.uid}', false)"`} class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${isCheckoutLocked ? 'opacity-50 cursor-not-allowed pointer-events-none ' : ''}${!item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
                 B&W <span class="font-mono text-[9px]">₹${rates.bw}</span>
               </button>
-              <button type="button" onclick="setMode('${item.uid}', true)" class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+              <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="setMode('${item.uid}', true)"`} class="px-3 py-1 rounded-full text-[10px] font-bold transition-all ${isCheckoutLocked ? 'opacity-50 cursor-not-allowed pointer-events-none ' : ''}${item.isColor ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
                 Color <span class="font-mono text-[9px]">₹${rates.color}</span>
               </button>
             </div>
 
             <!-- Orientation Toggle Pill -->
             <div class="flex gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-full border border-brand-500/20">
-              <button type="button" onclick="setOrientation('${item.uid}', 'portrait')" class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${item.orientation !== 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+              <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="setOrientation('${item.uid}', 'portrait')"`} class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${isCheckoutLocked ? 'opacity-50 cursor-not-allowed pointer-events-none ' : ''}${item.orientation !== 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
                 Portrait
               </button>
-              <button type="button" onclick="setOrientation('${item.uid}', 'landscape')" class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${item.orientation === 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
+              <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="setOrientation('${item.uid}', 'landscape')"`} class="px-2.5 py-1 rounded-full text-[10px] font-bold transition-all ${isCheckoutLocked ? 'opacity-50 cursor-not-allowed pointer-events-none ' : ''}${item.orientation === 'landscape' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-[#7C3AED]'}">
                 Landscape
               </button>
             </div>
@@ -572,15 +794,15 @@
             <!-- Page Range Pill -->
             <div class="flex items-center gap-1.5 bg-black/5 dark:bg-white/5 px-2.5 py-1 rounded-full border border-brand-500/20">
               <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400">Pages:</span>
-              <input type="text" value="${item.pageRange || 'all'}" onchange="updatePageRange('${item.uid}', this.value)" class="w-16 bg-transparent text-[10px] font-mono font-bold text-center outline-none text-[#7C3AED] dark:text-[#A78BFA] placeholder-gray-400" placeholder="all, 1-3" title="e.g. all, 1-3, 2">
+              <input type="text" ${isCheckoutLocked ? 'disabled' : ''} value="${item.pageRange || 'all'}" onchange="${isCheckoutLocked ? '' : `updatePageRange('${item.uid}', this.value)`}" class="w-16 bg-transparent text-[10px] font-mono font-bold text-center outline-none ${isCheckoutLocked ? 'opacity-40 cursor-not-allowed' : 'text-[#7C3AED] dark:text-[#A78BFA]'} placeholder-gray-400" placeholder="all, 1-3" title="e.g. all, 1-3, 2">
             </div>
 
             <!-- Copies & Item Total -->
             <div class="flex items-center gap-3">
               <div class="flex items-center gap-1 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-full border border-brand-500/20">
-                <button type="button" onclick="updateCopies('${item.uid}', -1)" class="w-6 h-6 rounded-full bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center text-xs font-mono font-bold transition-all active:scale-90">-</button>
+                <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="updateCopies('${item.uid}', -1)"`} class="w-6 h-6 rounded-full bg-brand-500/10 ${isCheckoutLocked ? 'opacity-30 cursor-not-allowed pointer-events-none' : 'hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] active:scale-90'} flex items-center justify-center text-xs font-mono font-bold transition-all">-</button>
                 <span class="w-5 text-center font-mono font-bold text-xs">${item.copies}</span>
-                <button type="button" onclick="updateCopies('${item.uid}', 1)" class="w-6 h-6 rounded-full bg-brand-500/10 hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center text-xs font-mono font-bold transition-all active:scale-90">+</button>
+                <button type="button" ${isCheckoutLocked ? 'disabled' : `onclick="updateCopies('${item.uid}', 1)"`} class="w-6 h-6 rounded-full bg-brand-500/10 ${isCheckoutLocked ? 'opacity-30 cursor-not-allowed pointer-events-none' : 'hover:bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] active:scale-90'} flex items-center justify-center text-xs font-mono font-bold transition-all">+</button>
               </div>
 
               <div class="text-right min-w-[50px]">
@@ -661,6 +883,7 @@
     }
 
     window.removeItem = function(uid) {
+      if (isCheckoutLocked) return;
       const item = queue.find(i => i.uid === uid);
       if (item && item.previewUrl && item.previewUrl.startsWith('blob:')) {
         try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
@@ -670,6 +893,7 @@
     };
 
     window.setMode = function(uid, isColor) {
+      if (isCheckoutLocked) return;
       const item = queue.find(i => i.uid === uid);
       if (item) {
         item.isColor = isColor;
@@ -678,6 +902,7 @@
     };
 
     window.setOrientation = function(uid, orientation) {
+      if (isCheckoutLocked) return;
       const item = queue.find(i => i.uid === uid);
       if (item) {
         item.orientation = orientation;
@@ -802,6 +1027,7 @@
     };
 
     window.updateCopies = function(uid, delta) {
+      if (isCheckoutLocked) return;
       const item = queue.find(i => i.uid === uid);
       if (item) {
         item.copies = Math.max(1, Math.min(50, item.copies + delta));
@@ -810,6 +1036,7 @@
     };
 
     window.updatePageRange = function(uid, rangeVal) {
+      if (isCheckoutLocked) return;
       const item = queue.find(i => i.uid === uid);
       if (item) {
         item.pageRange = (rangeVal || 'all').trim();
@@ -817,6 +1044,7 @@
     };
 
     clearAllBtn.addEventListener('click', () => {
+      if (isCheckoutLocked) return;
       queue.forEach(item => {
         if (item.previewUrl && item.previewUrl.startsWith('blob:')) {
           try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
@@ -835,11 +1063,13 @@
     const upiQrCanvas = document.getElementById('upiQrCanvas');
     const checkoutVpaLabel = document.getElementById('checkoutVpaLabel');
     const upiIntentBtn = document.getElementById('upiIntentBtn');
+    const payCashBtn = document.getElementById('payCashBtn');
     const cancelCheckoutBtn = document.getElementById('cancelCheckoutBtn');
-    const simulatePayBtn = document.getElementById('simulatePayBtn');
     const paidOrderBadge = document.getElementById('paidOrderBadge');
     const paidAmountBadge = document.getElementById('paidAmountBadge');
     const newOrderBtn = document.getElementById('newOrderBtn');
+    const cashTokenCard = document.getElementById('cashTokenCard');
+    const cashTokenCodeText = document.getElementById('cashTokenCodeText');
 
     let activeOrderId = null;
     let activeOrderAmount = 0;
@@ -867,137 +1097,53 @@
       const oid = orderData?.order_id || activeOrderId || '';
 
       paidOrderBadge.textContent = oid;
-      paidAmountBadge.textContent = `PAID ₹${amount.toFixed(2)}`;
+      paidAmountBadge.textContent = currentOrderStatus === 'pending_cash'
+        ? `CASH ₹${amount.toFixed(2)}`
+        : `PAID ₹${amount.toFixed(2)}`;
 
       upiPendingView.classList.add('hidden');
       upiSuccessView.classList.remove('hidden');
 
-      const step1Ind = document.getElementById('step1Indicator');
-      const step1Line = document.getElementById('stepLine1');
-      const step1Title = document.getElementById('step1Title');
-      const step1Desc = document.getElementById('step1Desc');
-
-      const step2Ind = document.getElementById('step2Indicator');
-      const step2Line = document.getElementById('stepLine2');
-      const step2Title = document.getElementById('step2Title');
-      const step2Desc = document.getElementById('step2Desc');
-
-      const step3Ind = document.getElementById('step3Indicator');
-      const step3Title = document.getElementById('step3Title');
-      const step3Desc = document.getElementById('step3Desc');
-
-      const callout = document.getElementById('statusCalloutBox');
-      const headerIcon = document.getElementById('trackerHeaderIcon');
       const headerSub = document.getElementById('trackerHeaderSubtitle');
+      const confirmationTitle = document.getElementById('confirmationTitle');
+      const confirmationDesc = document.getElementById('confirmationDesc');
+      const confirmationBadge = document.getElementById('confirmationBadge');
 
-      if (currentOrderStatus === 'paid') {
-        // Step 1: Completed
-        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
-        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
-        step1Line.className = "w-0.5 h-10 bg-brand-500/30 dark:bg-brand-400/20 my-1 transition-all duration-500";
-        step1Title.className = "text-sm font-extrabold text-emerald-600 dark:text-emerald-400 leading-none";
-        step1Desc.textContent = "Payment settled. Queued at counter.";
-
-        // Step 2: Queued / Next
-        step2Ind.className = "w-9 h-9 rounded-full bg-brand-500/15 border border-brand-500/30 text-brand-600 dark:text-brand-300 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
-        step2Ind.innerHTML = `<i data-lucide="printer" class="w-4 h-4"></i>`;
-        step2Line.className = "w-0.5 h-10 bg-gray-200 dark:bg-white/10 my-1 transition-all duration-500";
-        step2Title.className = "text-sm font-bold text-gray-800 dark:text-gray-200 leading-none";
-        step2Title.textContent = "Queued for Printing";
-        step2Desc.textContent = "Waiting for shopkeeper to tap Print...";
-
-        // Step 3: Pending
-        step3Ind.className = "w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
-        step3Ind.innerHTML = `<i data-lucide="package-check" class="w-4 h-4"></i>`;
-        step3Title.className = "text-sm font-bold text-gray-500 dark:text-gray-400 leading-none";
-        step3Title.textContent = "Ready for Pickup";
-        step3Desc.textContent = "Will be ready once spooling finishes.";
-
-        headerSub.textContent = "Step 1 of 3: Queued";
-        callout.innerHTML = `
-          <div class="w-full p-3.5 rounded-2xl bg-brand-500/10 border border-brand-500/25 flex items-center gap-3">
-            <div class="w-8 h-8 rounded-xl bg-brand-500/20 text-[#7C3AED] dark:text-[#A78BFA] flex items-center justify-center flex-shrink-0">
-              <i data-lucide="clock" class="w-4 h-4"></i>
-            </div>
-            <div class="text-left">
-              <p class="text-xs font-bold text-gray-900 dark:text-white">Order Received at Counter</p>
-              <p class="text-[11px] text-gray-600 dark:text-gray-300">The operator's terminal has received your document.</p>
-            </div>
-          </div>
-        `;
-      } else if (currentOrderStatus === 'printing') {
-        // Step 1: Completed
-        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
-        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
-        step1Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
-        step1Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
-        step1Desc.textContent = "Payment confirmed.";
-
-        // Step 2: Active / Pulsing!
-        step2Ind.className = "w-9 h-9 rounded-full bg-gradient-to-tr from-brand-600 to-purple-600 text-white flex items-center justify-center shadow-lg shadow-purple-500/35 flex-shrink-0 z-10 animate-pulse transition-all duration-300";
-        step2Ind.innerHTML = `<i data-lucide="printer" class="w-4 h-4 animate-bounce"></i>`;
-        step2Line.className = "w-0.5 h-10 bg-brand-500/40 my-1 transition-all duration-500";
-        step2Title.className = "text-sm font-extrabold text-[#7C3AED] dark:text-[#A78BFA] leading-none animate-pulse";
-        step2Title.textContent = "Printing at Counter";
-        step2Desc.textContent = "Documents are actively feeding into the printer tray...";
-
-        // Step 3: Pending
-        step3Ind.className = "w-9 h-9 rounded-full bg-gray-200 dark:bg-white/10 text-gray-400 dark:text-gray-400 flex items-center justify-center flex-shrink-0 z-10 transition-all duration-300";
-        step3Ind.innerHTML = `<i data-lucide="package-check" class="w-4 h-4"></i>`;
-        step3Title.className = "text-sm font-bold text-gray-500 dark:text-gray-400 leading-none";
-        step3Title.textContent = "Ready for Pickup";
-        step3Desc.textContent = "Preparing for handoff...";
-
-        headerSub.textContent = "Step 2 of 3: Printing...";
-        callout.innerHTML = `
-          <div class="w-full p-3.5 rounded-2xl bg-gradient-to-r from-brand-500/15 to-purple-500/15 border border-brand-500/30 flex items-center gap-3 animate-pulse">
-            <div class="w-9 h-9 rounded-xl bg-[#7C3AED] text-white flex items-center justify-center flex-shrink-0 shadow-md">
-              <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
-            </div>
-            <div class="text-left">
-              <p class="text-xs font-extrabold text-[#7C3AED] dark:text-[#C4B5FD]">Printing in Progress</p>
-              <p class="text-[11px] text-gray-600 dark:text-gray-300">Your pages are being processed at the shopkeeper's printer.</p>
-            </div>
-          </div>
-        `;
-      } else if (currentOrderStatus === 'completed') {
-        // Step 1: Completed
-        step1Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
-        step1Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
-        step1Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
-        step1Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
-        step1Desc.textContent = "Payment settled.";
-
-        // Step 2: Completed
-        step2Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/25 flex-shrink-0 z-10 transition-all duration-300";
-        step2Ind.innerHTML = `<i data-lucide="check" class="w-4 h-4 stroke-[3]"></i>`;
-        step2Line.className = "w-0.5 h-10 bg-emerald-500 my-1 transition-all duration-500";
-        step2Title.className = "text-sm font-bold text-emerald-600 dark:text-emerald-400 leading-none";
-        step2Title.textContent = "Printed Successfully";
-        step2Desc.textContent = "All pages finished printing.";
-
-        // Step 3: Completed / Ready!
-        step3Ind.className = "w-9 h-9 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/40 ring-4 ring-emerald-500/20 flex-shrink-0 z-10 transition-all duration-300";
-        step3Ind.innerHTML = `<i data-lucide="sparkles" class="w-4 h-4"></i>`;
-        step3Title.className = "text-sm font-extrabold text-emerald-600 dark:text-emerald-400 leading-none";
-        step3Title.textContent = "Ready for Pickup!";
-        step3Desc.textContent = "Collect your print from the counter.";
-
-        headerSub.textContent = "Step 3 of 3: Ready for Pickup";
-        headerIcon.className = "w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/30 flex-shrink-0";
-        headerIcon.innerHTML = `<i data-lucide="sparkles" class="w-5 h-5"></i>`;
-
-        callout.innerHTML = `
-          <div class="w-full p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-3.5 shadow-lg shadow-emerald-500/10">
-            <div class="w-10 h-10 rounded-2xl bg-emerald-500 text-white flex items-center justify-center flex-shrink-0 shadow-md">
-              <i data-lucide="package-check" class="w-5 h-5"></i>
-            </div>
-            <div class="text-left">
-              <p class="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Ready for Pickup!</p>
-              <p class="text-xs text-emerald-800/80 dark:text-emerald-200/80">Please collect your documents from the counter. Thank you!</p>
-            </div>
-          </div>
-        `;
+      if (currentOrderStatus === 'pending_cash' || currentOrderStatus === 'cash_at_counter') {
+        const token = orderData?.token_code || orderData?.tokenCode || '';
+        if (token) {
+          cashTokenCodeText.textContent = token;
+          cashTokenCard.classList.remove('hidden');
+        }
+        if (headerSub) {
+          headerSub.textContent = token ? `Token #${token} • Pay Cash` : 'Pay Cash at Counter';
+        }
+        if (confirmationTitle) {
+          confirmationTitle.textContent = 'Queued for Counter Payment';
+        }
+        if (confirmationBadge) {
+          confirmationBadge.textContent = 'Cash at Counter';
+          confirmationBadge.className = 'text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30';
+        }
+        if (confirmationDesc) {
+          confirmationDesc.textContent = `Queued for Counter Payment — Please pay ₹${amount.toFixed(2)} at the counter.`;
+        }
+      } else {
+        if (headerSub) {
+          headerSub.textContent = currentOrderStatus === 'completed' ? 'Printed & Ready' : 'Order Status';
+        }
+        if (confirmationTitle) {
+          confirmationTitle.textContent = currentOrderStatus === 'completed' ? 'Ready for Pickup' : 'Paid & Queued';
+        }
+        if (confirmationBadge) {
+          confirmationBadge.textContent = currentOrderStatus === 'completed' ? 'Ready' : 'Confirmed';
+          confirmationBadge.className = 'text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30';
+        }
+        if (confirmationDesc) {
+          confirmationDesc.textContent = currentOrderStatus === 'completed'
+            ? 'All pages have finished printing. Please collect your documents from the counter.'
+            : 'Payment confirmed. Your document has been sent to the shopkeeper\'s print queue.';
+        }
       }
       lucide.createIcons();
     }
@@ -1016,8 +1162,34 @@
           try {
             const msg = JSON.parse(evt.data);
             const status = (msg.status || msg.order?.status || (msg.event === 'order_paid' ? 'paid' : '')).toLowerCase();
-            if (status === 'paid' || status === 'printing' || status === 'completed') {
+            const pStatus = (msg.payment_status || msg.order?.payment_status || '').toUpperCase();
+
+            if (pStatus === 'REJECTED' || (msg.event === 'payment-verified' && msg.approved === false)) {
+              const feedbackEl = document.getElementById('paymentClaimFeedback');
+              const paymentWaitingPillText = document.getElementById('paymentWaitingPillText');
+              if (feedbackEl) {
+                feedbackEl.textContent = '⚠ Payment verification was rejected by vendor. Please try again or pay cash at counter.';
+                feedbackEl.className = 'text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1';
+                feedbackEl.classList.remove('hidden');
+              }
+              if (paymentWaitingPillText) {
+                paymentWaitingPillText.textContent = 'Payment rejected by shopkeeper. Please retry or select cash.';
+              }
+              return;
+            }
+
+            if (pStatus === 'PAYMENT_CLAIMED') {
+              const paymentWaitingPillText = document.getElementById('paymentWaitingPillText');
+              if (paymentWaitingPillText) {
+                paymentWaitingPillText.textContent = 'Payment claimed • Waiting for shopkeeper verification...';
+              }
+            }
+
+            if (status === 'pending_cash' || status === 'paid' || status === 'printing' || status === 'completed') {
               updateOrderStatusTracker(status, msg.order || msg);
+              if (status === 'completed') {
+                stopPaymentListeners();
+              }
             }
           } catch (_) {}
         };
@@ -1031,14 +1203,34 @@
           if (!res.ok) return;
           const statusData = await res.json();
           const s = (statusData.status || '').toLowerCase();
-          if (s === 'paid' || s === 'printing' || s === 'completed') {
+          const pStatus = (statusData.payment_status || statusData.order?.payment_status || '').toUpperCase();
+
+          if (pStatus === 'REJECTED') {
+            const feedbackEl = document.getElementById('paymentClaimFeedback');
+            const paymentWaitingPillText = document.getElementById('paymentWaitingPillText');
+            if (feedbackEl) {
+              feedbackEl.textContent = '⚠ Payment was not approved by shopkeeper. Please retry or pay cash at counter.';
+              feedbackEl.className = 'text-[11px] font-semibold text-rose-600 dark:text-rose-400 mt-1';
+              feedbackEl.classList.remove('hidden');
+            }
+            if (paymentWaitingPillText) {
+              paymentWaitingPillText.textContent = 'Payment rejected by shopkeeper. Please retry or select cash.';
+            }
+            return;
+          }
+
+          if (s === 'pending_cash' || s === 'paid' || s === 'printing' || s === 'completed') {
             updateOrderStatusTracker(s, statusData.order || statusData);
+            if (s === 'completed') {
+              stopPaymentListeners();
+            }
           }
         } catch (_) {}
       }, 4000);
     }
 
     function renderUpiCheckoutCard(orderPayload, fileCount, totalPagesCount) {
+      setCheckoutLocked(true);
       activeOrderId = orderPayload.order_id;
       activeOrderAmount = Number(orderPayload.total_amount || 0);
       activeUpiUri = orderPayload.upi_uri || orderPayload.upi_string || '';
@@ -1048,7 +1240,30 @@
       checkoutAmount.textContent = `₹${activeOrderAmount.toFixed(2)}`;
       checkoutVpaLabel.textContent = `VPA: ${orderPayload.vendor_vpa || 'shop@okaxis'}`;
 
+      const upiIntentBtnText = document.getElementById('upiIntentBtnText');
+      if (upiIntentBtnText) {
+        upiIntentBtnText.textContent = `Pay ₹${activeOrderAmount.toFixed(2)} with UPI`;
+      }
       upiIntentBtn.href = activeUpiUri || '#';
+
+      const feedbackEl = document.getElementById('paymentClaimFeedback');
+      const paymentWaitingPillText = document.getElementById('paymentWaitingPillText');
+      if (feedbackEl) {
+        feedbackEl.textContent = '';
+        feedbackEl.classList.add('hidden');
+      }
+      if (paymentWaitingPillText) {
+        paymentWaitingPillText.textContent = 'Waiting for payment confirmation...';
+      }
+      const claimPaidBtn = document.getElementById('claimPaidBtn');
+      if (claimPaidBtn) {
+        claimPaidBtn.disabled = false;
+        claimPaidBtn.innerHTML = `
+          <i data-lucide="check-circle-2" class="w-5 h-5 stroke-[2.2]"></i>
+          <span>Payment Done</span>
+        `;
+      }
+
       upiQrCanvas.innerHTML = '';
       if (typeof QRCode !== 'undefined' && activeUpiUri) {
         new QRCode(upiQrCanvas, {
@@ -1064,6 +1279,12 @@
       }
 
       upiSuccessView.classList.add('hidden');
+      cashTokenCard.classList.add('hidden');
+      payCashBtn.disabled = false;
+      payCashBtn.innerHTML = `
+        <i data-lucide="banknote" class="w-5 h-5 stroke-[2.2]"></i>
+        <span>Pay Cash at Counter</span>
+      `;
       upiPendingView.classList.remove('hidden');
       upiCheckoutSection.classList.remove('hidden');
       payButton.classList.add('hidden');
@@ -1071,6 +1292,55 @@
       lucide.createIcons();
 
       startPaymentListeners(activeOrderId);
+    }
+
+    const claimPaidBtn = document.getElementById('claimPaidBtn');
+    if (claimPaidBtn) {
+      claimPaidBtn.addEventListener('click', async () => {
+        if (!activeOrderId) return;
+        const feedback = document.getElementById('paymentClaimFeedback');
+        const pillText = document.getElementById('paymentWaitingPillText');
+
+        claimPaidBtn.disabled = true;
+        claimPaidBtn.innerHTML = `
+          <span class="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+          <span>Notifying Shop...</span>
+        `;
+
+        try {
+          const claimPayload = { amount: activeOrderAmount };
+          let res = await fetch(`/api/orders/${encodeURIComponent(activeOrderId)}/claim-paid`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(claimPayload),
+          });
+          if (!res.ok) {
+            res = await fetch(`/api/jobs/${encodeURIComponent(activeOrderId)}/claim-paid`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(claimPayload),
+            });
+          }
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || 'Failed to verify payment status.');
+          }
+          const claimData = await res.json().catch(() => ({}));
+          updateOrderStatusTracker('paid_queued', claimData.order || claimData);
+        } catch (e) {
+          claimPaidBtn.disabled = false;
+          claimPaidBtn.innerHTML = `
+            <i data-lucide="check-circle-2" class="w-5 h-5 stroke-[2.2]"></i>
+            <span>Payment Done</span>
+          `;
+          if (feedback) {
+            feedback.textContent = e.message || 'Could not notify shopkeeper. Please tap again or pay cash at counter.';
+            feedback.className = 'text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1';
+            feedback.classList.remove('hidden');
+          }
+          lucide.createIcons();
+        }
+      });
     }
 
     upiIntentBtn.addEventListener('click', (e) => {
@@ -1082,31 +1352,37 @@
       window.location.href = activeUpiUri;
     });
 
-    simulatePayBtn.addEventListener('click', async () => {
+    payCashBtn.addEventListener('click', async () => {
       if (!activeOrderId) return;
-      simulatePayBtn.disabled = true;
-      simulatePayBtn.textContent = 'Verifying...';
+      payCashBtn.disabled = true;
+      payCashBtn.innerHTML = `
+        <span class="inline-block w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></span>
+        <span>Selecting Cash...</span>
+      `;
       try {
-        const res = await fetch(`/api/orders/${encodeURIComponent(activeOrderId)}/verify-payment`, {
+        const res = await fetch(`/api/orders/${encodeURIComponent(activeOrderId)}/select-cash`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ verified_by: 'sandbox_portal' })
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Payment verification failed');
+          throw new Error(err.detail || 'Failed to select cash payment');
         }
-        const paidData = await res.json();
-        showPaidSuccessState(paidData.order || paidData);
-      } catch (err) {
-        alert(`Error verifying payment: ${err.message}`);
-      } finally {
-        simulatePayBtn.disabled = false;
-        simulatePayBtn.textContent = 'Simulate Test Payment';
+        const data = await res.json();
+        updateOrderStatusTracker('cash_at_counter', data.order || data);
+        startPaymentListeners(activeOrderId);
+      } catch (e) {
+        alert(e.message || 'Error selecting cash payment');
+        payCashBtn.disabled = false;
+        payCashBtn.innerHTML = `
+          <i data-lucide="banknote" class="w-5 h-5 stroke-[2.2]"></i>
+          <span>Pay Cash at Counter</span>
+        `;
+        lucide.createIcons();
       }
     });
 
-    cancelCheckoutBtn.addEventListener('click', async () => {
+    async function cancelCheckout() {
       stopPaymentListeners();
       if (activeOrderId) {
         try {
@@ -1116,15 +1392,25 @@
         } catch (_) {}
       }
       activeOrderId = null;
+      setCheckoutLocked(false);
+      cashTokenCard.classList.add('hidden');
       upiCheckoutSection.classList.add('hidden');
       payButton.classList.remove('hidden');
       payButton.disabled = queue.length === 0;
       payButtonText.textContent = 'Proceed to UPI Payment';
-    });
+    }
+
+    cancelCheckoutBtn.addEventListener('click', cancelCheckout);
+    const bannerCancelCheckoutBtn = document.getElementById('bannerCancelCheckoutBtn');
+    if (bannerCancelCheckoutBtn) {
+      bannerCancelCheckoutBtn.addEventListener('click', cancelCheckout);
+    }
 
     newOrderBtn.addEventListener('click', () => {
       stopPaymentListeners();
       activeOrderId = null;
+      setCheckoutLocked(false);
+      cashTokenCard.classList.add('hidden');
       queue.forEach(item => {
         if (item.previewUrl && item.previewUrl.startsWith('blob:')) {
           try { URL.revokeObjectURL(item.previewUrl); } catch (_) {}
@@ -1142,6 +1428,7 @@
 
       payButton.disabled = true;
       payButtonText.textContent = 'Uploading & Creating UPI Order...';
+      setCheckoutLocked(true);
 
       try {
         const formData = new FormData();
@@ -1160,10 +1447,14 @@
         const primaryIsColor = queue.some(item => item.isColor);
         const primaryPageRange = queue[0]?.pageRange || 'all';
         const primaryOrientation = queue[0]?.orientation || 'portrait';
+        const autoDeleteToggle = document.getElementById('autoDeleteToggle');
+        const autoDeleteRequested = autoDeleteToggle ? autoDeleteToggle.checked : false;
+
         formData.append('copies', primaryCopies);
         formData.append('is_color', primaryIsColor);
         formData.append('page_range', primaryPageRange);
         formData.append('orientation', primaryOrientation);
+        formData.append('auto_delete_after_print', autoDeleteRequested ? 'true' : 'false');
         formData.append('items_config', JSON.stringify(itemsConfig));
 
         const uploadRes = await fetch('/api/documents/batch-upload', {
@@ -1189,7 +1480,8 @@
             copies: primaryCopies,
             color_mode: primaryIsColor ? 'color' : 'bw',
             page_range: primaryPageRange,
-            orientation: primaryOrientation
+            orientation: primaryOrientation,
+            auto_delete_after_print: autoDeleteRequested
           })
         });
 
@@ -1206,6 +1498,7 @@
         );
       } catch (err) {
         alert(`Error: ${err.message}`);
+        setCheckoutLocked(false);
         payButton.disabled = false;
         payButtonText.textContent = 'Proceed to UPI Payment';
       }
