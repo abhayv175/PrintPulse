@@ -103,6 +103,20 @@ async def favicon():
     )
 
 
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon_svg():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "favicon.svg"), media_type="image/svg+xml"
+    )
+
+
+@app.get("/favicon.png", include_in_schema=False)
+async def favicon_png():
+    return FileResponse(
+        os.path.join(STATIC_DIR, "favicon.png"), media_type="image/png"
+    )
+
+
 @app.get("/apple-touch-icon.png", include_in_schema=False)
 @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
 async def apple_touch_icon():
