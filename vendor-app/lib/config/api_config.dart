@@ -50,18 +50,19 @@ class ApiConfig {
       isSecure ? 'wss://$baseHost' : 'ws://$baseHost';
 
   static final RegExp _localHostPattern =
-      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)');
+      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1|10\.0\.2\.2)');
   static final RegExp _legacyUrlPrefixPattern =
-      RegExp(r'https?://(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)(:\d+)?');
+      RegExp(r'https?://(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1|10\.0\.2\.2)(:\d+)?');
   static final RegExp _legacyHostWithPortPattern =
-      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1)(:\d+)?');
+      RegExp(r'(192\.168\.\d+\.\d+|localhost|127\.0\.0\.1|10\.0\.2\.2)(:\d+)?');
 
   /// Returns true when [value] contains a local/stale IP or localhost reference other than [hostIp].
   static bool hasOutdatedLocalHost(String value) {
     if (value.isEmpty) return false;
     if (value.contains('192.168.') ||
         value.contains('localhost') ||
-        value.contains('127.0.0.1')) {
+        value.contains('127.0.0.1') ||
+        value.contains('10.0.2.2')) {
       return true;
     }
     return _localHostPattern
@@ -161,7 +162,10 @@ class ApiConfig {
 
   // Vendor Completed Orders History
   static Uri vendorHistoryUri(String vendorId) =>
-      Uri.parse('$restBaseUrl/api/orders/vendor/$vendorId/history');
+      Uri.parse('$restBaseUrl/api/vendor/$vendorId/history');
+
+  static Uri deleteVendorHistoryUri(String vendorId) =>
+      Uri.parse('$restBaseUrl/api/vendor/$vendorId/history');
 
   static Uri orderHistoryUri({String? vendorId, String? status = 'completed'}) {
     final query = <String, String>{};
@@ -177,6 +181,9 @@ class ApiConfig {
   // Payment Verification Endpoint (Manual Approval Fallback)
   static Uri verifyPaymentUri(String orderId) =>
       Uri.parse('$restBaseUrl/api/orders/$orderId/verify-payment');
+
+  static Uri rejectOrderPaymentUri(String orderId) =>
+      Uri.parse('$restBaseUrl/api/orders/$orderId/reject');
 
   // Zero-Fee UPI & Job Payment Endpoints
   static Uri jobPaymentInfoUri(String jobId) =>

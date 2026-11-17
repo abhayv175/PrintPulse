@@ -852,6 +852,13 @@ async def get_vendor_order_history(vendor_id: str):
     return {"orders": history}
 
 
+@router.delete("/vendor/{vendor_id}/history")
+async def delete_vendor_order_history_alias(vendor_id: str):
+    """Alias for deleting vendor order history on the orders router."""
+    from app.api.routes_vendor import delete_vendor_history
+    return await delete_vendor_history(vendor_id)
+
+
 @router.get("/{order_id}/payment-info")
 async def get_payment_info(order_id: str):
     """
@@ -957,6 +964,14 @@ async def claim_paid_order(
     }
 
 
+@router.post("/{order_id}/reject")
+@router.post("/{order_id}/reject-payment")
+async def reject_order_payment(order_id: str):
+    """Explicit endpoint to reject claimed payment for an order and remove it from vendor queue."""
+    req = VerifyPaymentRequest(approved=False, verified_by="vendor_dashboard")
+    return await verify_order_payment(order_id, req)
+
+
 @router.post("/{order_id}/verify-payment")
 async def verify_order_payment(
     order_id: str,
@@ -967,12 +982,67 @@ async def verify_order_payment(
     and broadcasts an immediate 'payment-verified' / 'order_paid' event to vendor and customer.
     If approved is false, sets payment_status to 'REJECTED' and notifies customer to retry.
     """
-    order = ORDERS.get(order_id)
+    clean_order_id = os.path.basename(order_id.strip())
+    order = ORDERS.get(clean_order_id) or ORDERS.get(order_id)
     if not order:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Order '{order_id}' not found.",
         )
+
+    # Handle explicit rejection
+    if payload and payload.approved is False:
+        # Idempotent return if already marked rejected
+        if order.get("payment_status") == "REJECTED" or order.get("status") == "rejected":
+            summary = _format_order_summary(clean_order_id, order)
+            return {
+                "status": "rejected",
+                "payment_status": "REJECTED",
+                "approved": False,
+                "order_id": clean_order_id,
+                "job_id": clean_order_id,
+                "vendor_id": order["vendor_id"],
+                "order": summary,
+            }
+
+        order["payment_status"] = "REJECTED"
+        order["status"] = "rejected"
+        save_orders_to_disk()
+        summary = _format_order_summary(clean_order_id, order)
+        reject_event = {
+            "event": "payment-verified",
+            "type": "payment-verified",
+            "order_id": clean_order_id,
+            "job_id": clean_order_id,
+            "vendor_id": order["vendor_id"],
+            "status": "rejected",
+            "payment_status": "REJECTED",
+            "approved": False,
+            "order": summary,
+        }
+        rejected_status_event = {
+            "type": "status_update",
+            "event": "order_rejected",
+            "order_id": clean_order_id,
+            "vendor_id": order["vendor_id"],
+            "status": "rejected",
+            "payment_status": "REJECTED",
+            "order": summary,
+        }
+        await manager.broadcast_to_vendor(order["vendor_id"], reject_event)
+        await order_ws_manager.broadcast_to_vendor(clean_order_id, reject_event)
+        _trigger_pusher(f"vendor-{order['vendor_id']}", "payment-verified", reject_event)
+        _trigger_pusher(f"order-{clean_order_id}", "payment-verified", reject_event)
+
+        return {
+            "status": "rejected",
+            "payment_status": "REJECTED",
+            "approved": False,
+            "order_id": clean_order_id,
+            "job_id": clean_order_id,
+            "vendor_id": order["vendor_id"],
+            "order": summary,
+        }
 
     if order.get("status") == "cancelled":
         raise HTTPException(
@@ -980,40 +1050,17 @@ async def verify_order_payment(
             detail=f"Order '{order_id}' was cancelled and cannot be marked paid.",
         )
 
-    # Handle explicit rejection
-    if payload and payload.approved is False:
-        order["payment_status"] = "REJECTED"
-        save_orders_to_disk()
-        summary = _format_order_summary(order_id, order)
-        reject_event = {
-            "event": "payment-verified",
-            "type": "payment-verified",
-            "order_id": order_id,
-            "job_id": order_id,
-            "vendor_id": order["vendor_id"],
-            "status": "rejected",
-            "payment_status": "REJECTED",
-            "approved": False,
-            "order": summary,
-        }
-        await manager.broadcast_to_vendor(order["vendor_id"], reject_event)
-        await order_ws_manager.broadcast_to_vendor(order_id, reject_event)
-        _trigger_pusher(f"vendor-{order['vendor_id']}", "payment-verified", reject_event)
-        _trigger_pusher(f"order-{order_id}", "payment-verified", reject_event)
-
-        return {
-            "status": "rejected",
-            "payment_status": "REJECTED",
-            "approved": False,
-            "order_id": order_id,
-            "job_id": order_id,
-            "vendor_id": order["vendor_id"],
-            "order": summary,
-        }
-
     # Strict Cart & Amount Validation: compare submitted amount against server-side re-calculation
     submitted_amount = payload.amount if payload and payload.amount is not None else None
-    validate_cart_and_amount(order, submitted_amount=submitted_amount)
+    if submitted_amount is not None:
+        validate_cart_and_amount(order, submitted_amount=submitted_amount)
+    else:
+        # Vendor terminal verification: check if cart was invalidated or cancelled
+        if order.get("status") == "cancelled" or order.get("cart_invalidated"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cart modified after payment initiation. Please restart checkout.",
+            )
 
     already_paid = order.get("status") == "paid"
     paid_at = datetime.now().isoformat(timespec="seconds")

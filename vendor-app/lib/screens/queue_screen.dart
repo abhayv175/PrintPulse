@@ -32,10 +32,13 @@ String normalizeDownloadUrl(String rawUrl) {
   var normalized = trimmed;
   normalized = normalized.replaceAll('http://localhost:8000', ApiConfig.restBaseUrl);
   normalized = normalized.replaceAll('http://127.0.0.1:8000', ApiConfig.restBaseUrl);
+  normalized = normalized.replaceAll('http://10.0.2.2:8000', ApiConfig.restBaseUrl);
   normalized = normalized.replaceAll('localhost:8000', ApiConfig.baseHost);
   normalized = normalized.replaceAll('127.0.0.1:8000', ApiConfig.baseHost);
+  normalized = normalized.replaceAll('10.0.2.2:8000', ApiConfig.baseHost);
   normalized = normalized.replaceAll('localhost', ApiConfig.baseHost);
   normalized = normalized.replaceAll('127.0.0.1', ApiConfig.baseHost);
+  normalized = normalized.replaceAll('10.0.2.2', ApiConfig.baseHost);
   normalized = ApiConfig.normalizeLegacyHost(normalized);
   return normalized;
 }
@@ -149,7 +152,7 @@ Future<bool> handleVerifyPaymentAndPrint(
   final bool ownsClient = httpClient == null;
 
   PrintJob updatedJob = order.copyWith(
-    status: approved ? 'paid' : order.status,
+    status: approved ? 'paid' : 'rejected',
     paymentStatus: approved ? 'PAID' : 'REJECTED',
     paidAt: approved ? (order.paidAt ?? DateTime.now().toIso8601String()) : null,
   );
@@ -161,12 +164,14 @@ Future<bool> handleVerifyPaymentAndPrint(
         verifyUri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'approved': approved, 'verified_by': 'vendor_app'}),
-      ).timeout(const Duration(seconds: 4));
+      ).timeout(const Duration(seconds: 7));
 
       if (response.statusCode == 200) {
         final dynamic data = jsonDecode(response.body);
         if (data is Map && data['order'] is Map) {
           updatedJob = PrintJob.fromJson(Map<String, dynamic>.from(data['order'] as Map));
+        } else if (data is Map && data['order_id'] != null) {
+          updatedJob = PrintJob.fromJson(Map<String, dynamic>.from(data));
         }
       }
     } catch (e) {
@@ -179,6 +184,8 @@ Future<bool> handleVerifyPaymentAndPrint(
 
     if (!approved || !context.mounted) return false;
 
+    // Decoupled Print Spooling: Payment is ALREADY approved and marked PAID.
+    // If print dialog fails or is cancelled, the order remains PAID.
     return await handlePrintOrder(
       context,
       updatedJob,
@@ -253,16 +260,36 @@ Future<bool> handlePrintOrder(
     }
 
     // 2. Download-First Print Architecture:
-    // Completely download and save locally to app's storage (PrintPulse_Orders)
-    // BEFORE invoking Printing.layoutPdf or the system print manager.
+    // Sanitize job filename so Android's PrintManager / DocumentsUI does not fail on Save as PDF
+    final String cleanOrderId = order.orderId
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    final String jobName = cleanOrderId.toLowerCase().endsWith('.pdf')
+        ? cleanOrderId
+        : '$cleanOrderId.pdf';
+
     final ordersDir = await getOrdersDirectory();
-    final localPdfFile = File('${ordersDir.path}/${order.orderId}.pdf');
+    final localPdfFile = File('${ordersDir.path}/$jobName');
     Uint8List? pdfBytes;
 
-    if (localPdfFile.existsSync() && localPdfFile.lengthSync() > 0) {
-      debugPrint('Order PDF cached at: ${localPdfFile.path}');
-      pdfBytes = localPdfFile.readAsBytesSync();
-    } else {
+    // Check cached file on disk: ensure valid %PDF signature
+    if (localPdfFile.existsSync() && localPdfFile.lengthSync() >= 4) {
+      final cachedBytes = localPdfFile.readAsBytesSync();
+      if (cachedBytes.length >= 4 &&
+          cachedBytes[0] == 0x25 &&
+          cachedBytes[1] == 0x50 &&
+          cachedBytes[2] == 0x44 &&
+          cachedBytes[3] == 0x46) {
+        debugPrint('Valid cached PDF found at: ${localPdfFile.path}');
+        pdfBytes = cachedBytes;
+      } else {
+        debugPrint('Corrupt cached PDF at: ${localPdfFile.path}. Deleting.');
+        try {
+          localPdfFile.deleteSync();
+        } catch (_) {}
+      }
+    }
+
+    if (pdfBytes == null || pdfBytes.isEmpty) {
       String rawDownloadUrl = '';
       if (order.downloadUrl.isNotEmpty) {
         rawDownloadUrl = order.downloadUrl;
@@ -291,24 +318,34 @@ Future<bool> handlePrintOrder(
             'Downloaded document from $targetUri is empty (0 bytes).');
       }
 
+      // Validate PDF signature (%PDF)
+      if (downloadedBytes.length < 4 ||
+          downloadedBytes[0] != 0x25 ||
+          downloadedBytes[1] != 0x50 ||
+          downloadedBytes[2] != 0x44 ||
+          downloadedBytes[3] != 0x46) {
+        final sample = downloadedBytes.length > 60
+            ? String.fromCharCodes(downloadedBytes.take(60))
+            : String.fromCharCodes(downloadedBytes);
+        throw Exception('Server returned invalid PDF format: $sample');
+      }
+
       // Flush completely to local disk storage before print spooling
       localPdfFile.writeAsBytesSync(downloadedBytes, flush: true);
       debugPrint('Order PDF cached at: ${localPdfFile.path}');
 
-      // Strict requirement: Read strictly from local file path on disk
-      pdfBytes = localPdfFile.readAsBytesSync();
+      pdfBytes = downloadedBytes;
     }
 
     if (pdfBytes.isEmpty) {
-      throw Exception('Local PDF at ${localPdfFile.path} is empty (0 bytes).');
+      throw Exception('PDF payload is empty (0 bytes).');
     }
 
-    final String jobName = '${order.orderId}.pdf';
     final bool isLandscape = order.isLandscape;
     final PdfPageFormat pageFormat =
         isLandscape ? PdfPageFormat.a4.landscape : PdfPageFormat.a4;
 
-    // 3. Print execution: strictly read from local file path on disk
+    // 3. Print execution: strictly feed validated in-memory PDF bytes to layoutPdf
     final bool printed;
     if (printExecutor != null) {
       printed = await printExecutor(
@@ -322,8 +359,7 @@ Future<bool> handlePrintOrder(
         name: jobName,
         format: pageFormat,
         dynamicLayout: false,
-        onLayout: (PdfPageFormat format) async =>
-            localPdfFile.readAsBytesSync(),
+        onLayout: (PdfPageFormat format) async => pdfBytes!,
       );
     }
 

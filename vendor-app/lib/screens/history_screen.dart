@@ -20,6 +20,7 @@ class HistoryScreen extends StatefulWidget {
   final http.Client? testHttpClient;
   final PrintLayoutExecutor? testPrintExecutor;
   final VoidCallback? onRefreshRequested;
+  final VoidCallback? onHistoryCleared;
 
   const HistoryScreen({
     super.key,
@@ -27,6 +28,7 @@ class HistoryScreen extends StatefulWidget {
     this.testHttpClient,
     this.testPrintExecutor,
     this.onRefreshRequested,
+    this.onHistoryCleared,
   });
 
   @override
@@ -36,6 +38,7 @@ class HistoryScreen extends StatefulWidget {
 class HistoryScreenState extends State<HistoryScreen> {
   List<PrintJob> _orders = [];
   bool _isLoading = false;
+  bool _isDeletingHistory = false;
   String? _errorMessage;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -74,11 +77,16 @@ class HistoryScreenState extends State<HistoryScreen> {
   Future<void> _loadLocalHistory() async {
     try {
       final localOrders = await OrderHistoryService.loadLocalOrders(widget.vendorId);
-      final existingCachedIds = await OrderHistoryService.getCachedFileOrderIds(localOrders);
+      final hiddenIds = await OrderHistoryService.getHiddenOrderIds();
+      final visibleOrders = localOrders
+          .where((j) => !hiddenIds.contains(j.orderId))
+          .toList();
+      final existingCachedIds =
+          await OrderHistoryService.getCachedFileOrderIds(visibleOrders);
 
       if (mounted) {
         setState(() {
-          _orders = localOrders;
+          _orders = visibleOrders;
           _cachedFileOrderIds = existingCachedIds;
           _isLoading = false;
         });
@@ -118,18 +126,25 @@ class HistoryScreenState extends State<HistoryScreen> {
             ? decoded['orders'] as List<dynamic>
             : (decoded is List ? decoded : []);
 
+        final hiddenIds = await OrderHistoryService.getHiddenOrderIds();
+
         final List<PrintJob> loaded = rawOrders
             .map((item) =>
                 PrintJob.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => !hiddenIds.contains(item.orderId))
             .toList();
 
         // Merge with existing locally-cached orders
         final Map<String, PrintJob> mergedMap = {};
         for (final j in _orders) {
-          mergedMap[j.orderId] = j;
+          if (!hiddenIds.contains(j.orderId)) {
+            mergedMap[j.orderId] = j;
+          }
         }
         for (final j in loaded) {
-          mergedMap[j.orderId] = j;
+          if (!hiddenIds.contains(j.orderId)) {
+            mergedMap[j.orderId] = j;
+          }
         }
         final List<PrintJob> combined = mergedMap.values.toList()
           ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
@@ -171,6 +186,136 @@ class HistoryScreenState extends State<HistoryScreen> {
     } finally {
       if (ownsClient) {
         client.close();
+      }
+    }
+  }
+
+  /// Presents a confirmation dialog before deleting all completed and rejected order history.
+  Future<void> _confirmDeleteAllHistory() async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever_rounded, color: AppColors.dangerRed, size: 24),
+            SizedBox(width: 10),
+            Text(
+              'Delete All History',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Delete all order history? This action cannot be undone.',
+          style: TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.dangerRed,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Delete',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _executeDeleteAllHistory();
+    }
+  }
+
+  /// Clears all completed and rejected order history locally without network calls.
+  /// Persists order IDs to hidden_history_ids in SharedPreferences so they remain hidden across restarts.
+  Future<void> _executeDeleteAllHistory() async {
+    if (_isDeletingHistory) return;
+    setState(() {
+      _isDeletingHistory = true;
+    });
+
+    try {
+      // 1. Collect all order IDs currently shown in Order History and locally cached
+      final Set<String> idsToHide = _orders
+          .map((j) => j.orderId.trim())
+          .where((id) => id.isNotEmpty)
+          .toSet();
+
+      try {
+        final localOrders =
+            await OrderHistoryService.loadLocalOrders(widget.vendorId);
+        for (final job in localOrders) {
+          if (job.orderId.trim().isNotEmpty) {
+            idsToHide.add(job.orderId.trim());
+          }
+        }
+      } catch (_) {}
+
+      // 2. Persist to hidden_history_ids in SharedPreferences
+      await OrderHistoryService.addHiddenOrderIds(idsToHide);
+
+      // 3. Clear local storage files and prefs for this vendor
+      await OrderHistoryService.clearLocalHistory(widget.vendorId);
+
+      // 4. Clear displayed history list in state immediately
+      // This resets TOTAL SETTLED to ₹0.00 and COMPLETED PRINTS to 0
+      if (mounted) {
+        setState(() {
+          _orders.clear();
+          _cachedFileOrderIds.clear();
+          _isDeletingHistory = false;
+        });
+
+        // Notify dashboard to reset session earnings and completed jobs count
+        widget.onHistoryCleared?.call();
+
+        // 5. Show green "History cleared" snackbar
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(
+              children: [
+                Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'History cleared',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.successGreen,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('HistoryScreen: Error clearing history locally: $e');
+      if (mounted) {
+        setState(() {
+          _isDeletingHistory = false;
+        });
       }
     }
   }
@@ -242,34 +387,39 @@ class HistoryScreenState extends State<HistoryScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryPurple.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(9999),
-                          border: Border.all(
-                            color: AppColors.primaryPurple.withValues(alpha: 0.3),
+                      OutlinedButton.icon(
+                        onPressed: _isDeletingHistory ? null : _confirmDeleteAllHistory,
+                        icon: _isDeletingHistory
+                            ? const SizedBox(
+                                width: 13,
+                                height: 13,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                      AppColors.dangerRed),
+                                ),
+                              )
+                            : const Icon(Icons.delete_outline_rounded, size: 15),
+                        label: const Text(
+                          'Delete All History',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.history_rounded,
-                              size: 14,
-                              color: AppColors.primaryPurple,
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              '${_orders.length} Completed',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                color: AppColors.primaryPurple,
-                              ),
-                            ),
-                          ],
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.dangerRed,
+                          backgroundColor:
+                              AppColors.dangerRed.withValues(alpha: 0.08),
+                          side: BorderSide(
+                            color: AppColors.dangerRed.withValues(alpha: 0.35),
+                            width: 1.0,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 7),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(9999),
+                          ),
                         ),
                       ),
                     ],

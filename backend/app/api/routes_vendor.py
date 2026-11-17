@@ -314,6 +314,57 @@ async def get_vendor_stats(vendor_id: str):
     }
 
 
+@router.get("/{vendor_id}/history")
+async def get_vendor_history_endpoint(vendor_id: str):
+    """
+    Returns completed print orders for a given vendor, sorted newest-first with
+    UPI payer name and payment timestamps for the vendor app History tab.
+    """
+    from app.api.routes_orders import get_vendor_order_history
+    return await get_vendor_order_history(vendor_id)
+
+
+@router.delete("/{vendor_id}/history")
+async def delete_vendor_history(vendor_id: str):
+    """
+    Deletes all completed and rejected orders for that vendor_id from the database
+    (leaving any active/pending queue orders untouched), and cleans up any cached disk files.
+    Returns 200 OK.
+    """
+    from app.api.routes_upload import ORDERS, delete_order_files, save_orders_to_disk
+
+    clean_vendor_id = os.path.basename(vendor_id.strip())
+    orders_to_delete = []
+
+    for oid, order in list(ORDERS.items()):
+        if order.get("vendor_id") == clean_vendor_id:
+            st = (order.get("status") or "").lower()
+            pst = (order.get("payment_status") or "").upper()
+            # Delete only settled history: completed, rejected, or cancelled
+            if st in ("completed", "rejected", "cancelled") or pst in ("COMPLETED", "REJECTED"):
+                orders_to_delete.append(oid)
+
+    deleted_count = 0
+    for oid in orders_to_delete:
+        order = ORDERS.pop(oid, None)
+        if order:
+            try:
+                delete_order_files(oid, order)
+            except Exception:
+                pass
+            deleted_count += 1
+
+    if deleted_count > 0:
+        save_orders_to_disk()
+
+    return {
+        "success": True,
+        "message": f"Deleted {deleted_count} completed/rejected order history record(s) for vendor '{clean_vendor_id}'.",
+        "deleted_count": deleted_count,
+        "vendor_id": clean_vendor_id,
+    }
+
+
 @router.websocket("/ws/vendor/{vendor_id}")
 async def websocket_vendor(websocket: WebSocket, vendor_id: str):
     await manager.connect(vendor_id, websocket)

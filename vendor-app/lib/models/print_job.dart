@@ -185,7 +185,7 @@ class PrintJob {
         json['utr']?.toString();
 
     return PrintJob(
-      orderId: json['order_id']?.toString() ?? 'Unknown Order',
+      orderId: json['order_id']?.toString() ?? json['id']?.toString() ?? 'Unknown Order',
       vendorId: json['vendor_id']?.toString() ?? '',
       timestamp: json['timestamp']?.toString() ?? '',
       totalAmount: parsedAmount,

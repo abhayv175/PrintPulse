@@ -1748,6 +1748,105 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('Zero-Fee UPI claimed order can be rejected cleanly removing it from live queue',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    bool rejectPaymentCalled = false;
+    final wsController = StreamController<dynamic>.broadcast();
+
+    final mockClient = MockClient((request) async {
+      if (request.url.path.contains('/pricing')) {
+        return http.Response(
+            '{"vendor_id": "kiosk_vendor_99", "bw_price": 2.0, "color_price": 10.0}',
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (request.url.path.contains('/stats')) {
+        return http.Response(
+            '{"vendor_id": "kiosk_vendor_99", "session_revenue": 0.0, "bw_pages_printed": 0, "color_pages_printed": 0, "completed_orders": 0}',
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (request.url.path.contains('/verify-payment')) {
+        rejectPaymentCalled = true;
+        return http.Response(
+          jsonEncode({
+            'status': 'rejected',
+            'payment_status': 'REJECTED',
+            'order_id': 'ORD-REJ-999',
+            'order': {
+              'order_id': 'ORD-REJ-999',
+              'status': 'rejected',
+              'payment_status': 'REJECTED',
+              'total_amount': 25.0,
+            }
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{"success": true}', 200,
+          headers: {'content-type': 'application/json'});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: DashboardScreen(
+          vendorId: 'kiosk_vendor_99',
+          shopUrl: 'https://jh0yc.aiccloud.online/shop/kiosk_vendor_99',
+          testWebSocketStream: wsController.stream,
+          testHttpClient: mockClient,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Navigate to Queue tab
+    await tester.tap(find.text('Queue'));
+    await tester.pumpAndSettle();
+
+    // Simulate WebSocket event for zero-fee claimed UPI payment
+    wsController.add({
+      'event': 'payment-claimed',
+      'order_id': 'ORD-REJ-999',
+      'vendor_id': 'kiosk_vendor_99',
+      'payment_status': 'PAYMENT_CLAIMED',
+      'status': 'pending_payment',
+      'utr_number': '112233445566',
+      'total_amount': 25.0,
+      'order': {
+        'order_id': 'ORD-REJ-999',
+        'vendor_id': 'kiosk_vendor_99',
+        'status': 'pending_payment',
+        'payment_status': 'PAYMENT_CLAIMED',
+        'payment_method': 'upi',
+        'utr_number': '112233445566',
+        'amount': 25.0,
+        'total_amount': 25.0,
+        'pages': 5,
+        'copies': 1,
+        'is_color': false,
+        'download_url': 'https://jh0yc.aiccloud.online/api/documents/ORD-REJ-999/download',
+      }
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.text('REJECT'), findsOneWidget);
+
+    // Tap "REJECT"
+    await tester.tap(find.text('REJECT'));
+    await tester.pumpAndSettle();
+
+    expect(rejectPaymentCalled, isTrue);
+    // Order should be removed from active queue
+    expect(find.text('ORD-REJ-999'), findsNothing);
+    expect(find.text('Queue is Empty'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   test('NotificationService channel, event contracts, and audio chime verification', () async {
     // 1. Verify fresh high-importance notification channel contract
     expect(NotificationService.channelId, equals('printpulse_urgent_jobs_v2'));
@@ -2076,6 +2175,159 @@ void main() {
     if (cachedPdf.existsSync()) {
       cachedPdf.deleteSync();
     }
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('Bottom navigation Queue badge is hidden when active queue is empty and updates dynamically',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final wsController = StreamController<dynamic>.broadcast();
+
+    final testHttpClient = MockClient((request) async {
+      if (request.url.path.contains('/pricing')) {
+        return http.Response(
+            '{"vendor_id": "badge_test", "bw_price": 2.0, "color_price": 10.0}',
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (request.url.path.contains('/stats')) {
+        return http.Response(
+            '{"vendor_id": "badge_test", "session_revenue": 0.0, "bw_pages_printed": 0, "color_pages_printed": 0, "completed_orders": 0}',
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      return http.Response('{"success": true}', 200);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: DashboardScreen(
+          vendorId: 'badge_test',
+          shopUrl: 'https://printpulse.test/shop/badge_test',
+          testHttpClient: testHttpClient,
+          testWebSocketStream: wsController.stream,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // With 0 orders in queue, the badge should NOT be rendered in the dock
+    expect(find.byType(Visibility), findsWidgets);
+    final dockQueueBadge = find.descendant(
+      of: find.byType(Stack),
+      matching: find.text('0'),
+    );
+    expect(dockQueueBadge, findsNothing);
+
+    // Add active payment-claimed order
+    wsController.add({
+      'event': 'payment-claimed',
+      'order_id': 'ORD-BADGE-1',
+      'vendor_id': 'badge_test',
+      'payment_status': 'PAYMENT_CLAIMED',
+      'status': 'pending_payment',
+      'order': {
+        'order_id': 'ORD-BADGE-1',
+        'vendor_id': 'badge_test',
+        'status': 'pending_payment',
+        'payment_status': 'PAYMENT_CLAIMED',
+        'amount': 10.0,
+        'total_amount': 10.0,
+      }
+    });
+    await tester.pumpAndSettle();
+
+    // Now badge '1' should appear on Queue tab
+    expect(find.text('1'), findsWidgets);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('History screen header displays Delete All History button and cleans up locally on confirm',
+      (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    bool deleteNetworkCalled = false;
+
+    final mockCompletedJobs = [
+      {
+        'order_id': 'ORD-HIST-DEL-1',
+        'vendor_id': 'del_hist_vendor',
+        'payer_name': 'Aarav Patel',
+        'paid_at': '2026-11-16T10:00:00',
+        'page_count': 2,
+        'total_pages': 2,
+        'copies': 1,
+        'is_color': false,
+        'total_amount': 4.0,
+        'status': 'completed',
+        'auto_delete_after_print': false,
+        'documents': [],
+      },
+    ];
+
+    final testHttpClient = MockClient((request) async {
+      if (request.method == 'GET' && request.url.path.contains('/history')) {
+        return http.Response(jsonEncode({'orders': mockCompletedJobs}), 200);
+      }
+      if (request.method == 'DELETE' && request.url.path.contains('/history')) {
+        deleteNetworkCalled = true;
+        return http.Response(jsonEncode({'success': true, 'deleted_count': 1}), 200);
+      }
+      if (request.url.path.contains('/stats')) {
+        return http.Response(jsonEncode({'session_revenue': 4.0, 'completed_orders': 1}), 200);
+      }
+      return http.Response('{"orders": []}', 200);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: DashboardScreen(
+          vendorId: 'del_hist_vendor',
+          shopUrl: 'https://printpulse.test/shop/del_hist_vendor',
+          testHttpClient: testHttpClient,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Navigate to History tab
+    await tester.tap(find.text('History'));
+    await tester.pumpAndSettle();
+
+    // 1. Verify "Delete All History" button is present instead of "1 Completed"
+    expect(find.text('Delete All History'), findsOneWidget);
+    expect(find.text('1 Completed'), findsNothing);
+    expect(find.text('Aarav Patel'), findsOneWidget);
+
+    // 2. Tap "Delete All History" to show confirmation dialog
+    await tester.tap(find.text('Delete All History'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.text('Delete all order history? This action cannot be undone.'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+
+    // 3. Confirm deletion (100% local: no network DELETE call)
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    expect(deleteNetworkCalled, isFalse);
+    expect(find.text('Aarav Patel'), findsNothing);
+    expect(find.text('History cleared'), findsOneWidget);
+    expect(find.text('₹0.00'), findsOneWidget);
+    expect(find.text('0'), findsWidgets);
+
+    // 4. Verify hidden_history_ids is saved in SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    final hiddenIds = prefs.getStringList('hidden_history_ids');
+    expect(hiddenIds, isNotNull);
+    expect(hiddenIds, contains('ORD-HIST-DEL-1'));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

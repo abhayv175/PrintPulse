@@ -88,6 +88,14 @@ async def payments_verify_alias(request: Request):
     )
     return await verify_order_payment(order_id, verify_req)
 
+
+@app.delete("/api/vendor/{vendor_id}/history")
+@app.delete("/api/vendors/{vendor_id}/history")
+async def delete_vendor_history_route(vendor_id: str):
+    """Deletes all completed and rejected orders for that vendor_id from the database."""
+    from app.api.routes_vendor import delete_vendor_history
+    return await delete_vendor_history(vendor_id)
+
 # WebSocket direct endpoints for vendor APK live queue and customer payment status
 app.add_api_websocket_route("/ws/vendor/{vendor_id}", websocket_vendor)
 app.add_api_websocket_route("/ws/{vendor_id}", websocket_vendor)

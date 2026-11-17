@@ -1413,6 +1413,105 @@ def test_r_checkout_locking_and_cart_amount_validation(client=None):
     assert res_clean_verify.json()["payment_status"] == "PAID"
 
 
+def test_s_order_rejection_endpoints(client=None):
+    """
+    Verifies that:
+    1. POST /api/orders/{order_id}/reject updates payment_status to 'REJECTED' and status to 'rejected'.
+    2. POST /api/jobs/{order_id}/reject-payment updates payment_status to 'REJECTED'.
+    3. Both routes are idempotent.
+    """
+    client = client or TestClient(app)
+    pdf_bytes = generate_mock_pdf(num_pages=2)
+
+    res_upload = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": "shop_alpha", "copies": 1, "is_color": False},
+        files=[("files", ("rej_doc.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_upload.status_code == 200
+    order_id = res_upload.json()["order_id"]
+
+    res_reject = client.post(f"/api/orders/{order_id}/reject")
+    assert res_reject.status_code == 200
+    data = res_reject.json()
+    assert data["status"] == "rejected"
+    assert data["payment_status"] == "REJECTED"
+    assert data["approved"] is False
+
+    # Idempotent re-rejection
+    res_re_reject = client.post(f"/api/jobs/{order_id}/reject-payment")
+    assert res_re_reject.status_code == 200
+    assert res_re_reject.json()["payment_status"] == "REJECTED"
+
+
+def test_t_delete_vendor_history(client=None):
+    """
+    Verifies that:
+    1. DELETE /api/vendor/{vendor_id}/history deletes completed and rejected orders.
+    2. Leaves active/pending queue orders untouched.
+    3. Returns 200 OK.
+    """
+    client = client or TestClient(app)
+    from app.api.routes_upload import ORDERS
+
+    vendor_id = "shop_history_del_test"
+    pdf_bytes = generate_mock_pdf(num_pages=1)
+
+    # 1. Create an active order (pending payment)
+    res_active = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": vendor_id, "copies": 1, "is_color": False},
+        files=[("files", ("active.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_active.status_code == 200
+    active_order_id = res_active.json()["order_id"]
+
+    # 2. Create a completed order
+    res_completed = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": vendor_id, "copies": 1, "is_color": False},
+        files=[("files", ("completed.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_completed.status_code == 200
+    completed_order_id = res_completed.json()["order_id"]
+    ORDERS[completed_order_id]["status"] = "completed"
+    ORDERS[completed_order_id]["payment_status"] = "COMPLETED"
+
+    # 3. Create a rejected order
+    res_rejected = client.post(
+        "/api/documents/batch-upload",
+        data={"vendor_id": vendor_id, "copies": 1, "is_color": False},
+        files=[("files", ("rejected.pdf", pdf_bytes, "application/pdf"))],
+    )
+    assert res_rejected.status_code == 200
+    rejected_order_id = res_rejected.json()["order_id"]
+    ORDERS[rejected_order_id]["status"] = "rejected"
+    ORDERS[rejected_order_id]["payment_status"] = "REJECTED"
+
+    # 4. Verify history returns completed order
+    res_hist = client.get(f"/api/vendor/{vendor_id}/history")
+    assert res_hist.status_code == 200
+    history_ids = [o["order_id"] for o in res_hist.json()["orders"]]
+    assert completed_order_id in history_ids
+
+    # 5. Call DELETE /api/vendor/{vendor_id}/history
+    res_del = client.delete(f"/api/vendor/{vendor_id}/history")
+    assert res_del.status_code == 200
+    del_data = res_del.json()
+    assert del_data["success"] is True
+    assert del_data["deleted_count"] >= 2
+
+    # 6. Verify completed and rejected orders were removed, while active order remains untouched
+    assert completed_order_id not in ORDERS
+    assert rejected_order_id not in ORDERS
+    assert active_order_id in ORDERS
+    assert ORDERS[active_order_id]["status"] == "awaiting_payment"
+
+    # 7. Clean up
+    ORDERS.pop(active_order_id, None)
+
+
+
 
 # ---------------------------------------------------------------------------
 # Standalone CLI Test Runner with Checklist Output

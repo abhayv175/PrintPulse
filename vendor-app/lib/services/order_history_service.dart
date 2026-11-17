@@ -173,7 +173,10 @@ class OrderHistoryService {
       debugPrint('OrderHistoryService: Error scanning orders directory: $e');
     }
 
-    final list = orderMap.values.toList();
+    final hiddenIds = await getHiddenOrderIds();
+    final list = orderMap.values
+        .where((job) => !hiddenIds.contains(job.orderId))
+        .toList();
     list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return list;
   }
@@ -191,5 +194,87 @@ class OrderHistoryService {
       }
     } catch (_) {}
     return existingCachedIds;
+  }
+
+  /// SharedPreferences key storing order IDs cleared by the vendor
+  static const String hiddenHistoryKey = 'hidden_history_ids';
+
+  /// Returns the set of order IDs that have been cleared/hidden locally by the vendor.
+  static Future<Set<String>> getHiddenOrderIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(hiddenHistoryKey) ?? [];
+      return list.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
+    } catch (e) {
+      debugPrint('OrderHistoryService: Error reading hidden IDs: $e');
+      return {};
+    }
+  }
+
+  /// Appends order IDs to the locally persisted hidden history list in SharedPreferences.
+  static Future<void> addHiddenOrderIds(Iterable<String> orderIds) async {
+    final validIds = orderIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (validIds.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final existing = (prefs.getStringList(hiddenHistoryKey) ?? []).toSet();
+      existing.addAll(validIds);
+      await prefs.setStringList(hiddenHistoryKey, existing.toList());
+      updatesNotifier.value++;
+      debugPrint(
+          'OrderHistoryService: Persisted ${existing.length} hidden history order IDs.');
+    } catch (e) {
+      debugPrint('OrderHistoryService: Error saving hidden IDs: $e');
+    }
+  }
+
+  /// Resets the hidden IDs list in SharedPreferences.
+  static Future<void> clearHiddenOrderIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(hiddenHistoryKey);
+    } catch (_) {}
+  }
+
+  /// Clears locally-persisted order history for a vendor from SharedPreferences,
+  /// mirrored JSON file, and any cached print PDF documents in PrintPulse_Orders.
+  static Future<void> clearLocalHistory(String vendorId) async {
+    try {
+      final cleanVendorId =
+          vendorId.trim().isNotEmpty ? vendorId.trim() : 'default_vendor';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('cached_order_history_$cleanVendorId');
+
+      try {
+        final ordersDir = await getOrdersDirectory();
+        final historyFile =
+            File('${ordersDir.path}/order_history_$cleanVendorId.json');
+        if (historyFile.existsSync()) {
+          historyFile.deleteSync();
+        }
+        if (ordersDir.existsSync()) {
+          final files = ordersDir.listSync().whereType<File>();
+          for (final file in files) {
+            final filename = file.uri.pathSegments.last;
+            if (filename.toLowerCase().endsWith('.pdf') &&
+                !filename.startsWith('.')) {
+              try {
+                file.deleteSync();
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Warning: Could not remove mirrored history files: $e');
+      }
+
+      updatesNotifier.value++;
+      debugPrint('OrderHistoryService: Cleared all local history for $cleanVendorId');
+    } catch (e) {
+      debugPrint('OrderHistoryService: Error clearing history: $e');
+    }
   }
 }

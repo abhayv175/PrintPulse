@@ -183,6 +183,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .timeout(const Duration(seconds: 4));
         if (res.statusCode == 200 && mounted) {
           final data = jsonDecode(res.body) as Map<String, dynamic>;
+          final hiddenIds = await OrderHistoryService.getHiddenOrderIds();
+          if (hiddenIds.isNotEmpty && _totalEarnings == 0.0 && _completedJobsCount == 0) {
+            return;
+          }
           setState(() {
             _bwPagesPrinted = (data['bw_pages_printed'] as num?)?.toInt() ?? _bwPagesPrinted;
             _colorPagesPrinted = (data['color_pages_printed'] as num?)?.toInt() ?? _colorPagesPrinted;
@@ -347,7 +351,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text('Connected to local server at $discoveredIp:8000!'),
+                  child: Text('Connected to server at ${ApiConfig.restBaseUrl}!'),
                 ),
               ],
             ),
@@ -405,7 +409,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Configure Local Server IP',
+                    'Configure Server Host',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
@@ -474,7 +478,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ),
                           child: const Text(
-                            'Save IP',
+                            'Save Host',
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
                               color: Colors.white,
@@ -908,16 +912,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      // Rejection verification event
+      // Rejection verification event - purge immediately from active live queue
       if ((event == 'payment-verified' && (data['approved'] == false || data['status'] == 'rejected')) ||
+          event == 'order_rejected' ||
+          data['event'] == 'order_rejected' ||
+          status == 'rejected' ||
           pStatus == 'REJECTED') {
         final rejId = data['order_id']?.toString() ?? data['job_id']?.toString() ?? orderMap['order_id']?.toString();
         if (rejId != null) {
           setState(() {
-            final idx = _orders.indexWhere((o) => o.orderId == rejId);
-            if (idx != -1) {
-              _orders[idx] = _orders[idx].copyWith(paymentStatus: 'REJECTED');
-            }
+            _orders.removeWhere((o) => o.orderId == rejId);
+            _unprintedPaidOrderIds.remove(rejId);
+            _printingOrders.remove(rejId);
           });
         }
         return;
@@ -1384,12 +1390,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         paidAt: DateTime.now().toIso8601String(),
       );
 
+      // STEP 1: Verify payment on backend FIRST before print spooling
       try {
         final response = await client.post(
           ApiConfig.verifyJobPaymentUri(orderId),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'approved': true, 'verified_by': 'vendor_dashboard'}),
-        ).timeout(const Duration(seconds: 4));
+        ).timeout(const Duration(seconds: 7));
 
         if (response.statusCode == 200) {
           final dynamic data = jsonDecode(response.body);
@@ -1399,19 +1406,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
           } else if (data is Map && data['order_id'] != null) {
             paidJob = PrintJob.fromJson(Map<String, dynamic>.from(data));
           }
+        } else {
+          // If server rejects verification, show error and halt before spooling
+          if (mounted) {
+            ScaffoldMessenger.of(context).clearSnackBars();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                    'Payment verification failed (${response.statusCode}): ${response.body}'),
+                backgroundColor: AppColors.dangerRed,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            );
+          }
+          return;
         }
       } catch (e) {
         debugPrint('Warning: Payment verification network error: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Network error verifying payment: $e'),
+              backgroundColor: AppColors.dangerRed,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
+        return;
       } finally {
         if (ownsClient) client.close();
       }
 
       if (!mounted) return;
 
-      // Update session total earnings and order state locally
+      // Ensure paidJob is explicitly marked PAID
+      paidJob = paidJob.copyWith(
+        status: 'paid',
+        paymentStatus: 'PAID',
+      );
+
+      // STEP 2: Update session total earnings and order state locally to PAID
       _applyPaidSettlement(paidJob);
 
-      // Immediately launch Android Print Spooler preview in one tap
+      // STEP 3: Decoupled Print Spooling: launch Android Print Spooler preview.
+      // If print dialog fails or is cancelled, payment status is NEVER reverted to rejected.
       final bool printed = await handlePrintOrder(
         context,
         paidJob,
@@ -1442,9 +1485,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _historyScreenKey.currentState?.recordCompletedJobLocally(completedJob);
 
         final bool autoDeleted = paidJob.autoDeleteAfterPrint || paidJob.isPrivate;
-        if (!mounted) return;
-
-      ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -1475,6 +1516,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       } else {
+        // Print cancelled or backed out: payment remains PAID!
+        // Order is retained in queue with "PAID • Not Printed" badge, "Retry Print", and "Mark Completed".
         setState(() {
           _unprintedPaidOrderIds.add(paidJob.orderId);
           final notPrintedJob = paidJob.copyWith(
@@ -1589,30 +1632,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final client = widget.testHttpClient ?? http.Client();
     final bool ownsClient = widget.testHttpClient == null;
     try {
-      await client.post(
+      final response = await client.post(
         ApiConfig.verifyJobPaymentUri(orderId),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'approved': false, 'verified_by': 'vendor_dashboard'}),
-      ).timeout(const Duration(seconds: 4));
+      ).timeout(const Duration(seconds: 7));
 
-      setState(() {
-        final idx = _orders.indexWhere((o) => o.orderId == orderId);
-        if (idx != -1) {
-          _orders[idx] = _orders[idx].copyWith(paymentStatus: 'REJECTED');
+      if (response.statusCode == 200) {
+        setState(() {
+          _orders.removeWhere((o) => o.orderId == orderId);
+          _unprintedPaidOrderIds.remove(orderId);
+          _printingOrders.remove(orderId);
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Payment claim rejected for ${job.orderId}'),
+              backgroundColor: AppColors.dangerRed,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
         }
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment claim rejected for ${job.orderId}'),
-            backgroundColor: AppColors.dangerRed,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to reject order (${response.statusCode}): ${response.body}'),
+              backgroundColor: AppColors.dangerRed,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
       }
     } catch (e) {
       debugPrint('Error rejecting payment: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Network error rejecting order: $e'),
+            backgroundColor: AppColors.dangerRed,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     } finally {
       if (ownsClient) client.close();
     }
@@ -2584,6 +2653,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  /// Filtered active live queue list (excluding rejected, completed, and cancelled orders)
+  List<PrintJob> get _activeQueueOrders => _orders.where((o) =>
+      o.paymentStatus != 'REJECTED' &&
+      o.status.toLowerCase() != 'rejected' &&
+      o.status.toLowerCase() != 'completed' &&
+      o.status.toLowerCase() != 'cancelled' &&
+      !_completedOrderIds.contains(o.orderId)
+  ).toList();
+
+  int get _activeQueueCount => _activeQueueOrders.length;
+
   // -------------------------------------------------------------------------
   // TAB 2: QUEUE SECTION (LIVE PRINT ORDERS)
   // -------------------------------------------------------------------------
@@ -2592,6 +2672,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final palette = colors.palette;
     final primaryTextColor = colors.primary;
     final secondaryTextColor = colors.secondary;
+
+    // Active Live Queue: filter out rejected, completed, and cancelled jobs
+    final activeQueueOrders = _activeQueueOrders;
 
     return SafeArea(
       child: Column(
@@ -2621,7 +2704,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         borderRadius: BorderRadius.circular(9999),
                       ),
                       child: Text(
-                        '${_orders.length}',
+                        '${activeQueueOrders.length}',
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -2650,7 +2733,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           // Orders List or Empty Glass State
           Expanded(
-            child: _orders.isEmpty
+            child: activeQueueOrders.isEmpty
                 ? Center(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 32.0),
@@ -2717,10 +2800,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ).animate().fadeIn(duration: 350.ms)
                 : ListView.separated(
                     padding: const EdgeInsets.only(top: 4, left: 20, right: 20, bottom: 100),
-                    itemCount: _orders.length,
+                    itemCount: activeQueueOrders.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 14),
                     itemBuilder: (context, index) {
-                      final job = _orders[index];
+                      final job = activeQueueOrders[index];
                       final isCancelling = _cancellingOrders.contains(job.orderId);
                       final bool isPaid = job.isPaid;
                       final bool isNotPrinted =
@@ -4010,6 +4093,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   vendorId: widget.vendorId,
                   testHttpClient: widget.testHttpClient,
                   testPrintExecutor: widget.testPrintExecutor,
+                  onHistoryCleared: () {
+                    setState(() {
+                      _totalEarnings = 0.0;
+                      _completedJobsCount = 0;
+                      _bwPagesPrinted = 0;
+                      _colorPagesPrinted = 0;
+                      _settledOrderIds.clear();
+                    });
+                  },
                 ),
               ),
               _KeepAliveTab(
@@ -4170,8 +4262,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     activeColor,
                                     proximity,
                                   )!;
-                                  final int badgeCount =
-                                      index == 1 ? _orders.length : 0;
+                                  final int activeQueueCount = _activeQueueCount;
 
                                   return Expanded(
                                     child: GestureDetector(
@@ -4204,10 +4295,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                   size: 25,
                                                   color: itemColor,
                                                 ),
-                                                if (badgeCount > 0)
-                                                  Positioned(
-                                                    top: -4,
-                                                    right: -8,
+                                                Positioned(
+                                                  top: -4,
+                                                  right: -8,
+                                                  child: Visibility(
+                                                    visible: index == 1 &&
+                                                        activeQueueCount > 0,
                                                     child: Container(
                                                       padding: const EdgeInsets
                                                           .symmetric(
@@ -4221,7 +4314,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                                     9999),
                                                       ),
                                                       child: Text(
-                                                        '$badgeCount',
+                                                        '$activeQueueCount',
                                                         style: const TextStyle(
                                                           fontSize: 9,
                                                           fontWeight:
@@ -4231,6 +4324,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                       ),
                                                     ),
                                                   ),
+                                                ),
                                               ],
                                             ),
                                             const SizedBox(height: 3),
