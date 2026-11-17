@@ -6,7 +6,7 @@ services:
     container_name: printpulse-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "80:8000"
     volumes:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
