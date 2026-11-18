@@ -77,7 +77,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _shopName = 'PrintPulse Shop';
   String _vendorEmail = '';
   String _vendorPhone = '';
-  bool _shopIsOpen = true;
+  final Set<String> _expandedSections = <String>{};
   bool _autoSpool = true;
   final String _defaultPrinter = 'System Default / Wi-Fi Spooler - Ready';
   final String _paperSize = 'A4 Standard (210 × 297 mm)';
@@ -199,18 +199,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _vendorPhone = cachedPhone.trim();
         }
 
-        _shopIsOpen = prefs.getBool('shop_is_open') ?? true;
         _autoSpool = prefs.getBool('printer_auto_spool') ?? true;
       });
     } catch (_) {}
   }
 
-  Future<void> _toggleShopStatus(bool value) async {
-    setState(() => _shopIsOpen = value);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('shop_is_open', value);
-    } catch (_) {}
+  void _toggleSection(String sectionKey) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (_expandedSections.contains(sectionKey)) {
+        _expandedSections.remove(sectionKey);
+      } else {
+        _expandedSections.add(sectionKey);
+      }
+    });
   }
 
   Future<void> _toggleAutoSpool(bool value) async {
@@ -3375,8 +3377,137 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // -------------------------------------------------------------------------
-  // TAB 3: PROFILE & SETTINGS SECTION
+  // TAB 3: PROFILE & SETTINGS SECTION (IN-PLACE ACCORDION SECTIONS)
   // -------------------------------------------------------------------------
+
+  /// Reusable in-place expandable accordion card with smooth AnimatedSize and AnimatedRotation.
+  Widget _buildAccordionCard({
+    required String sectionKey,
+    required IconData icon,
+    Color? iconColor,
+    Color? iconBgColor,
+    required String title,
+    String? subtitle,
+    Widget? trailingBadge,
+    required Widget child,
+    required Color primaryTextColor,
+    required Color secondaryTextColor,
+  }) {
+    final bool isExpanded = _expandedSections.contains(sectionKey);
+
+    return GlassContainer(
+      borderRadius: 24,
+      padding: EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header (always visible, tap to toggle without navigating)
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => _toggleSection(sectionKey),
+              borderRadius: BorderRadius.circular(24),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: iconBgColor ??
+                            AppColors.primaryPurple.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        icon,
+                        size: 22,
+                        color: iconColor ?? AppColors.primaryPurple,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: primaryTextColor,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          if (subtitle != null && subtitle.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              subtitle,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: secondaryTextColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (trailingBadge != null) ...[
+                      const SizedBox(width: 8),
+                      trailingBadge,
+                    ],
+                    const SizedBox(width: 8),
+                    // Trailing Chevron with smooth AnimatedRotation
+                    AnimatedRotation(
+                      turns: isExpanded ? 0.5 : 0.0,
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      child: Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 22,
+                        color: isExpanded
+                            ? AppColors.primaryPurple
+                            : secondaryTextColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Smooth In-Place Expandable Body
+          ClipRect(
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: isExpanded
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Color(0x1A7C3AED),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                          child: child,
+                        ),
+                      ],
+                    )
+                  : const SizedBox(width: double.infinity, height: 0),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildProfileTab(BuildContext context) {
     final colors = _resolveThemeColors(context);
     final palette = colors.palette;
@@ -3403,27 +3534,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 18),
 
-            // Shop / Vendor Details Card
-            GlassContainer(
-              borderRadius: 24,
-              padding: const EdgeInsets.all(20),
+            // 1. Shop & Vendor Details Accordion Card
+            _buildAccordionCard(
+              sectionKey: 'shop_details',
+              icon: Icons.storefront_rounded,
+              title: 'Shop & Vendor Details',
+              subtitle: widget.vendorId,
+              primaryTextColor: primaryTextColor,
+              secondaryTextColor: secondaryTextColor,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Container(
-                        width: 52,
-                        height: 52,
+                        width: 44,
+                        height: 44,
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
                             colors: [AppColors.primaryPurple, AppColors.secondaryPurple],
                           ),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                        child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 28),
+                        child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 24),
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3459,66 +3594,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(
-                    height: 1,
-                    thickness: 1,
-                    color: Color(0x1A7C3AED),
-                  ),
-                  const SizedBox(height: 14),
-                  // Shop Status Toggle: Open for Orders vs Closed
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Shop Status',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: primaryTextColor,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _shopIsOpen ? 'Open for walk-in & online orders' : 'Closed for new print orders',
-                            style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: (_shopIsOpen ? AppColors.successGreen : AppColors.warningOrange).withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(9999),
-                              border: Border.all(
-                                color: (_shopIsOpen ? AppColors.successGreen : AppColors.warningOrange).withValues(alpha: 0.3),
-                              ),
-                            ),
-                            child: Text(
-                              _shopIsOpen ? 'OPEN' : 'CLOSED',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: _shopIsOpen ? AppColors.successGreen : AppColors.warningOrange,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Switch.adaptive(
-                            value: _shopIsOpen,
-                            activeThumbColor: AppColors.successGreen,
-                            onChanged: _toggleShopStatus,
-                          ),
-                        ],
                       ),
                     ],
                   ),
@@ -3576,82 +3651,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // UPI ID Settlement Management Card
-            GlassContainer(
-              borderRadius: 24,
-              padding: const EdgeInsets.all(20),
+            // 2. UPI ID Settlement Management Accordion Card
+            _buildAccordionCard(
+              sectionKey: 'upi_management',
+              icon: Icons.account_balance_wallet_rounded,
+              iconColor: AppColors.successGreen,
+              iconBgColor: AppColors.successGreen.withValues(alpha: 0.12),
+              title: 'UPI ID Management',
+              subtitle: _vendorUpiId,
+              primaryTextColor: primaryTextColor,
+              secondaryTextColor: secondaryTextColor,
+              trailingBadge: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.successGreen.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(9999),
+                  border: Border.all(
+                    color: AppColors.successGreen.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.verified_rounded, size: 12, color: AppColors.successGreen),
+                    SizedBox(width: 4),
+                    Text(
+                      'Active',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.successGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: AppColors.successGreen.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.account_balance_wallet_rounded,
-                              size: 20,
-                              color: AppColors.successGreen,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'UPI ID Management',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryTextColor,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Direct Bank Settlement (0% Fee)',
-                                style: TextStyle(fontSize: 12, color: secondaryTextColor),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppColors.successGreen.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(9999),
-                          border: Border.all(
-                            color: AppColors.successGreen.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.verified_rounded, size: 12, color: AppColors.successGreen),
-                            SizedBox(width: 4),
-                            Text(
-                              'Active',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.successGreen,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                  Text(
+                    'Direct Bank Settlement (0% Fee)',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: primaryTextColor,
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Zero-fee settlements are paid directly to your linked UPI address upon instant customer QR scan.',
+                    style: TextStyle(fontSize: 12, color: secondaryTextColor, height: 1.4),
+                  ),
+                  const SizedBox(height: 14),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
@@ -3709,52 +3762,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ).animate().fadeIn(duration: 400.ms, delay: 50.ms).slideY(begin: 0.1, end: 0),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // Printer & Print Preferences Card
-            GlassContainer(
-              borderRadius: 24,
-              padding: const EdgeInsets.all(20),
+            // 3. Printer & Print Preferences Accordion Card
+            _buildAccordionCard(
+              sectionKey: 'printer_preferences',
+              icon: Icons.print_rounded,
+              title: 'Printer & Spool Preferences',
+              subtitle: 'Hardware & Format Output',
+              primaryTextColor: primaryTextColor,
+              secondaryTextColor: secondaryTextColor,
+              trailingBadge: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.successGreen.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(9999),
+                  border: Border.all(
+                    color: AppColors.successGreen.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle_rounded, size: 12, color: AppColors.successGreen),
+                    SizedBox(width: 4),
+                    Text(
+                      'Ready',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.successGreen,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryPurple.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.print_rounded,
-                          size: 20,
-                          color: AppColors.primaryPurple,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Printer & Spool Preferences',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: primaryTextColor,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Hardware & Format Output',
-                            style: TextStyle(fontSize: 12, color: secondaryTextColor),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
                   // Default Printer Status
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -3858,74 +3903,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ).animate().fadeIn(duration: 400.ms, delay: 100.ms).slideY(begin: 0.1, end: 0),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // Theme Selector Card
+            // 4. Theme & Appearance Accordion Card
             ListenableBuilder(
               listenable: globalThemeController,
               builder: (context, _) {
                 final currentMode = globalThemeController.themeMode;
+                final modeLabel = currentMode == ThemeMode.light
+                    ? 'Light'
+                    : (currentMode == ThemeMode.dark ? 'Dark' : 'System');
 
-                return GlassContainer(
-                  borderRadius: 24,
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.palette_outlined, size: 20, color: AppColors.primaryPurple),
-                          const SizedBox(width: 10),
-                          Text(
-                            'Theme & Appearance',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: primaryTextColor,
-                            ),
-                          ),
-                        ],
+                return _buildAccordionCard(
+                  sectionKey: 'theme_appearance',
+                  icon: Icons.palette_outlined,
+                  title: 'Theme & Appearance',
+                  subtitle: '$modeLabel mode active',
+                  primaryTextColor: primaryTextColor,
+                  secondaryTextColor: secondaryTextColor,
+                  trailingBadge: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryPurple.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(9999),
+                      border: Border.all(color: AppColors.primaryPurple.withValues(alpha: 0.3)),
+                    ),
+                    child: Text(
+                      modeLabel,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primaryPurple,
                       ),
-                      const SizedBox(height: 14),
-                      // 3-way Segmented Buttons (Light, Dark, System)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildThemeSegmentOption(
-                              label: 'Light',
-                              icon: Icons.light_mode_rounded,
-                              isSelected: currentMode == ThemeMode.light,
-                              onTap: () {
-                                HapticFeedback.selectionClick();
-                                globalThemeController.setThemeMode(ThemeMode.light);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildThemeSegmentOption(
-                              label: 'Dark',
-                              icon: Icons.dark_mode_rounded,
-                              isSelected: currentMode == ThemeMode.dark,
-                              onTap: () {
-                                HapticFeedback.selectionClick();
-                                globalThemeController.setThemeMode(ThemeMode.dark);
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildThemeSegmentOption(
-                              label: 'System',
-                              icon: Icons.brightness_auto_rounded,
-                              isSelected: currentMode == ThemeMode.system,
-                              onTap: () {
-                                HapticFeedback.selectionClick();
-                                globalThemeController.setThemeMode(ThemeMode.system);
-                              },
-                            ),
-                          ),
-                        ],
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildThemeSegmentOption(
+                          label: 'Light',
+                          icon: Icons.light_mode_rounded,
+                          isSelected: currentMode == ThemeMode.light,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            globalThemeController.setThemeMode(ThemeMode.light);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildThemeSegmentOption(
+                          label: 'Dark',
+                          icon: Icons.dark_mode_rounded,
+                          isSelected: currentMode == ThemeMode.dark,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            globalThemeController.setThemeMode(ThemeMode.dark);
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _buildThemeSegmentOption(
+                          label: 'System',
+                          icon: Icons.brightness_auto_rounded,
+                          isSelected: currentMode == ThemeMode.system,
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            globalThemeController.setThemeMode(ThemeMode.system);
+                          },
+                        ),
                       ),
                     ],
                   ),
@@ -3933,54 +3980,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
               },
             ).animate().fadeIn(duration: 400.ms, delay: 150.ms).slideY(begin: 0.1, end: 0),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // Print Pricing (INR) Configuration Card
-            PrintPricingCard(
-              vendorId: widget.vendorId,
-              httpClient: widget.testHttpClient,
+            // 5. Print Pricing (INR) Accordion Card
+            _buildAccordionCard(
+              sectionKey: 'print_pricing',
+              icon: Icons.payments_rounded,
+              title: 'Print Pricing (INR)',
+              subtitle: 'Per-page B&W & Color rates',
+              primaryTextColor: primaryTextColor,
+              secondaryTextColor: secondaryTextColor,
+              child: PrintPricingCard(
+                vendorId: widget.vendorId,
+                httpClient: widget.testHttpClient,
+                embedded: true,
+              ),
             ).animate().fadeIn(duration: 400.ms, delay: 200.ms).slideY(begin: 0.1, end: 0),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // App Info & Support Card
-            Container(
-              decoration: BoxDecoration(
-                color: palette.cardSurface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: palette.devCardBorder,
-                  width: 1.0,
+            // 6. App Info & Support Accordion Card
+            _buildAccordionCard(
+              sectionKey: 'app_info',
+              icon: Icons.info_outline_rounded,
+              title: 'App Info & Support',
+              subtitle: 'v1.0.0 • Developer Portfolio',
+              primaryTextColor: primaryTextColor,
+              secondaryTextColor: secondaryTextColor,
+              trailingBadge: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: palette.subtlePillBg,
+                  borderRadius: BorderRadius.circular(9999),
+                  border: Border.all(color: palette.subtlePillBorder),
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: palette.cardPurpleShadow,
-                    blurRadius: 20,
-                    offset: const Offset(0, 4),
+                child: const Text(
+                  'v1.0.0',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primaryPurple,
                   ),
-                  BoxShadow(
-                    color: palette.cardDarkShadow,
-                    blurRadius: 10,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                ),
               ),
               child: Column(
                 children: [
                   Material(
                     color: Colors.transparent,
                     child: InkWell(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      borderRadius: BorderRadius.circular(16),
                       splashColor: const Color(0xFF7C3AED).withValues(alpha: 0.12),
                       highlightColor: const Color(0xFF7C3AED).withValues(alpha: 0.06),
                       onTap: () => _launchDeveloperUrl(context),
                       child: Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(12),
                         child: Row(
                           children: [
                             Container(
-                              width: 44,
-                              height: 44,
+                              width: 40,
+                              height: 40,
                               decoration: BoxDecoration(
                                 color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
                                 shape: BoxShape.circle,
@@ -3988,10 +4046,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               child: const Icon(
                                 Icons.code_rounded,
                                 color: Color(0xFF7C3AED),
-                                size: 22,
+                                size: 20,
                               ),
                             ),
-                            const SizedBox(width: 14),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3999,7 +4057,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   Text(
                                     'About the Developer',
                                     style: TextStyle(
-                                      fontSize: 15,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.bold,
                                       color: primaryTextColor,
                                     ),
@@ -4015,10 +4073,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ],
                               ),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 8),
                             const Icon(
                               Icons.arrow_outward_rounded,
-                              size: 20,
+                              size: 18,
                               color: Color(0xFF7C3AED),
                             ),
                           ],
@@ -4026,41 +4084,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 8),
                   const Divider(height: 1, thickness: 1, color: Color(0x1A7C3AED)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.primaryPurple),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Version',
-                              style: TextStyle(fontSize: 13, color: secondaryTextColor),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: palette.subtlePillBg,
-                            borderRadius: BorderRadius.circular(9999),
-                            border: Border.all(color: palette.subtlePillBorder),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.primaryPurple),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Version',
+                            style: TextStyle(fontSize: 13, color: secondaryTextColor),
                           ),
-                          child: const Text(
-                            'v1.0.0 (Production Release)',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.primaryPurple,
-                            ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: palette.subtlePillBg,
+                          borderRadius: BorderRadius.circular(9999),
+                          border: Border.all(color: palette.subtlePillBorder),
+                        ),
+                        child: const Text(
+                          'v1.0.0 (Production Release)',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primaryPurple,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -4068,34 +4125,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             const SizedBox(height: 24),
 
-            // Logout Button
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _handleSignOut,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.dangerRed,
-                side: BorderSide(color: AppColors.dangerRed.withValues(alpha: 0.4)),
-                backgroundColor: AppColors.dangerRed.withValues(alpha: 0.06),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9999)),
-              ),
-              icon: const Icon(Icons.logout_rounded, size: 20),
-              label: const Text(
-                'Disconnect Kiosk',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.3,
+            // Disconnect Kiosk Button (Persistent Action)
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _handleSignOut,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.dangerRed,
+                  side: BorderSide(color: AppColors.dangerRed.withValues(alpha: 0.4)),
+                  backgroundColor: AppColors.dangerRed.withValues(alpha: 0.06),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9999)),
+                ),
+                icon: const Icon(Icons.logout_rounded, size: 20),
+                label: const Text(
+                  'Disconnect Kiosk',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
                 ),
               ),
-            ),
-          ).animate().fadeIn(duration: 400.ms, delay: 300.ms).slideY(begin: 0.1, end: 0),
-        ],
+            ).animate().fadeIn(duration: 400.ms, delay: 300.ms).slideY(begin: 0.1, end: 0),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildThemeSegmentOption({
     required String label,
@@ -4278,7 +4335,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.only(left: 28, right: 28, bottom: 12),
+        padding: const EdgeInsets.only(left: 28, right: 28, bottom: 14),
         child: Container(
           height: 68,
           decoration: BoxDecoration(

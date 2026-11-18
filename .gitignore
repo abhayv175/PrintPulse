@@ -20,6 +20,10 @@ backend/uploads/*
 *.png
 *.jpg
 *.jpeg
+!vendor-app/assets/**
+!vendor-app/android/app/src/main/res/**
+!backend/static/**
+!docs/screenshots/**
 
 # -----------------------------------------------------------------------------
 # Python, Virtual Environments & Testing Artifacts

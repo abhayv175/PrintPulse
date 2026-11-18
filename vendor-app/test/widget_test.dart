@@ -325,6 +325,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(derivedVendorId), findsOneWidget);
+    // Expand Shop & Vendor Details accordion to reveal Customer Web Portal URL
+    await tester.tap(find.text('Shop & Vendor Details'));
+    await tester.pumpAndSettle();
     expect(find.text(expectedUrl), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -480,8 +483,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(ApiConfig.restBaseUrl, 'https://jh0yc.aiccloud.online');
-    expect(find.text('https://jh0yc.aiccloud.online/shop/abhayv175'), findsOneWidget);
     expect(find.text('abhayv175'), findsOneWidget);
+    // Expand Shop & Vendor Details accordion to reveal Customer Web Portal URL
+    await tester.tap(find.text('Shop & Vendor Details'));
+    await tester.pumpAndSettle();
+    expect(find.text('https://jh0yc.aiccloud.online/shop/abhayv175'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -913,11 +919,28 @@ void main() {
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
 
-    // Verify UPI ID Management, Shop Details, and Printer Preferences cards exist
+    // Verify accordion cards exist in collapsed state by default
+    expect(find.text('Shop & Vendor Details'), findsOneWidget);
     expect(find.text('UPI ID Management'), findsOneWidget);
-    expect(find.text('Shop Status'), findsOneWidget);
     expect(find.text('Printer & Spool Preferences'), findsOneWidget);
+    expect(find.text('Theme & Appearance'), findsOneWidget);
+    expect(find.text('Print Pricing (INR)'), findsOneWidget);
+    expect(find.text('App Info & Support'), findsOneWidget);
+    // Verify Shop Status is completely removed
+    expect(find.text('Shop Status'), findsNothing);
+
+    // In collapsed state, internal controls are hidden
+    expect(find.text('Edit UPI ID'), findsNothing);
+
+    // Tap UPI ID Management header to expand in-place
+    await tester.tap(find.text('UPI ID Management'));
+    await tester.pumpAndSettle();
     expect(find.text('Edit UPI ID'), findsOneWidget);
+
+    // Tap again to collapse in-place
+    await tester.tap(find.text('UPI ID Management'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit UPI ID'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

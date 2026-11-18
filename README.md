@@ -57,6 +57,108 @@
   </table>
 </div>
 
+<br>
+
+### 3. Vendor Android App — Counter Kiosk Terminal & Settings
+*Native Flutter tablet and smartphone interface for automated order receiving, live queue spooling, and zero-fee bank settlements.*
+
+<div align="center">
+  <table>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_01_login.jpg" alt="Vendor Login Screen" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>One-Tap Google Sign-In</strong>
+        <br>
+        <em>Minimal auth with dynamic vendor ID resolution.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_03_dashboard_home.jpg" alt="Vendor Dashboard Home" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Kiosk Dashboard</strong>
+        <br>
+        <em>Printer status, jobs printed today, & session total.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_04_counter_qr_modal.jpg" alt="Counter QR Modal" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Desk Counter QR Modal</strong>
+        <br>
+        <em>Display on counter or export directly to device gallery.</em>
+      </td>
+    </tr>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_05_live_queue.jpg" alt="Live Print Queue" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Live Order Queue</strong>
+        <br>
+        <em>Sub-50ms WebSocket push with active badge counter.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_06_order_history.jpg" alt="Order History Screen" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Order History & Cleanup</strong>
+        <br>
+        <em>Settled print history with one-tap permanent deletion.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_07_profile_collapsed.jpg" alt="Profile Accordions Collapsed" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>In-Place Accordion Profile</strong>
+        <br>
+        <em>All settings categories collapsed cleanly by default.</em>
+      </td>
+    </tr>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_08_profile_upi.jpg" alt="UPI ID Management" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Zero-Fee UPI ID Settings</strong>
+        <br>
+        <em>Direct bank settlement without gateway transaction fees.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_09_profile_spooler.jpg" alt="Printer & Spooler Preferences" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Hardware Spool Preferences</strong>
+        <br>
+        <em>Standard A4 formatting and automated print dispatching.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_11_profile_pricing.jpg" alt="Print Pricing Matrix" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Live Rate Configuration</strong>
+        <br>
+        <em>Customize B&W and Color rates synced live to portal.</em>
+      </td>
+    </tr>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_02_google_auth.jpg" alt="Google Account Selection" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Native Google Auth Prompt</strong>
+        <br>
+        <em>Secure biometric/OAuth account chooser bottom sheet.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_08b_profile_shop_details.jpg" alt="Shop & Vendor Details" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Shop & Portal Metadata</strong>
+        <br>
+        <em>Vendor shop identity, email, and one-tap portal copy.</em>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/screenshots/vendor_10_profile_theme.jpg" alt="Theme & Appearance" width="260" style="border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.15);">
+        <br>
+        <strong>Theme & Appearance</strong>
+        <br>
+        <em>High-contrast Dark, Light, and System adaptive UI.</em>
+      </td>
+    </tr>
+  </table>
+</div>
+
 ---
 
 ## ⚡ Core Value Proposition & Pain Points Solved
@@ -76,7 +178,7 @@
 ```mermaid
 flowchart TD
     subgraph Clients["Edge Clients"]
-        CUST["Student / Customer Smartphone<br>(Next.js / HTML5 Portal)"]
+        CUST["Student / Customer Smartphone<br>(HTML5 / JS Web Portal)"]
         VEND["Shopkeeper Android Terminal<br>(Flutter Vendor Client)"]
     end
 
@@ -94,7 +196,7 @@ flowchart TD
 
     subgraph Storage["Persistence & Hardware Execution"]
         DISK["Isolated Multi-Tenant Spool<br>/uploads/{vendor_id}/"]
-        STATE["Transactional Order Store<br>MongoDB & Prisma JSON Engine"]
+        STATE["Transactional Order Store<br>Local JSON & File Store"]
         SPOOL["Hardware Print Spooler<br>Printing.layoutPdf() → Wi-Fi / USB"]
     end
 
@@ -195,20 +297,10 @@ flutter build apk --release
 
 ---
 
-## 🎬 Architecture & Launch Demo Video
-
-A 30-second 1080p promotional & system architecture video built with **Remotion** is available in the companion project at `~/Desktop/printpulse-promo`:
-* **Resolution:** 1920 × 1080 (30 FPS • 900 Frames)
-* **Audio:** Driving electronic soundtrack + native `new_job.mp3` order chime
-* **Visuals:** Real production screenshots, kinetic typography, animated packet relays, and side-by-side device synchronization.
-* **Output Path:** `~/Desktop/printpulse-promo/out/printpulse-recruiter-demo.mp4`
-
----
-
 ## 👨‍💻 Architect & Author
 
 **Abhay Verma**
 * Full-Stack & Distributed Systems Engineer
 * Portfolio: [abhayv175.netlify.app](https://abhayv175.netlify.app)
 * Live Production Backend: [jh0yc.aiccloud.online](https://jh0yc.aiccloud.online)
-* Technologies: FastAPI • Flutter • WebSockets • Python 3.12 • Next.js • Docker • MongoDB • UPI Protocols
+* Technologies: FastAPI • Flutter • WebSockets • Python 3.12 • HTML5/JS • Docker • UPI Protocols

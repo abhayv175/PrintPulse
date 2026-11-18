@@ -13,12 +13,14 @@ class PrintPricingCard extends StatefulWidget {
   final String vendorId;
   final http.Client? httpClient;
   final void Function(double bwRate, double colorRate)? onPricingUpdated;
+  final bool embedded;
 
   const PrintPricingCard({
     super.key,
     required this.vendorId,
     this.httpClient,
     this.onPricingUpdated,
+    this.embedded = false,
   });
 
   @override
@@ -170,12 +172,10 @@ class _PrintPricingCardState extends State<PrintPricingCard> {
     final primaryTextColor = isDark ? Colors.white : AppColors.lightTextPrimary;
     final secondaryTextColor = isDark ? Colors.white70 : const Color(0xFF6B7280);
 
-    return GlassContainer(
-      borderRadius: 24,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!widget.embedded) ...[
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -202,143 +202,152 @@ class _PrintPricingCardState extends State<PrintPricingCard> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
-            'Customize per-page print rates synced live to customer portal.',
-            style: TextStyle(fontSize: 12, color: secondaryTextColor),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'B&W Rate (₹ / page)',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: secondaryTextColor),
+        ],
+        Text(
+          'Customize per-page print rates synced live to customer portal.',
+          style: TextStyle(fontSize: 12, color: secondaryTextColor),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'B&W Rate (₹ / page)',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: secondaryTextColor),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _bwController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                    ],
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: primaryTextColor,
+                      fontFamily: 'monospace',
                     ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _bwController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-                      ],
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: primaryTextColor,
-                        fontFamily: 'monospace',
-                      ),
-                      decoration: InputDecoration(
-                        prefixText: '₹ ',
-                        prefixStyle: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primaryPurple),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        filled: true,
-                        fillColor: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFF9FAFB),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(color: AppColors.primaryPurple, width: 1.8),
+                    decoration: InputDecoration(
+                      prefixText: '₹ ',
+                      prefixStyle: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primaryPurple),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      filled: true,
+                      fillColor: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Color Rate (₹ / page)',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: secondaryTextColor),
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _colorController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-                      ],
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: primaryTextColor,
-                        fontFamily: 'monospace',
-                      ),
-                      decoration: InputDecoration(
-                        prefixText: '₹ ',
-                        prefixStyle: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primaryPurple),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        filled: true,
-                        fillColor: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFF9FAFB),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide(
-                            color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(color: AppColors.primaryPurple, width: 1.8),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
                         ),
                       ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: AppColors.primaryPurple, width: 1.8),
+                      ),
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isSaving ? null : _savePricing,
-              icon: _isSaving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Icon(Icons.check_rounded, size: 18),
-              label: Text(_isSaving ? 'Updating...' : 'Save Rates'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primaryPurple,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Color Rate (₹ / page)',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: secondaryTextColor),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _colorController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                    ],
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: primaryTextColor,
+                      fontFamily: 'monospace',
+                    ),
+                    decoration: InputDecoration(
+                      prefixText: '₹ ',
+                      prefixStyle: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.primaryPurple),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      filled: true,
+                      fillColor: isDark ? Colors.white.withValues(alpha: 0.05) : const Color(0xFFF9FAFB),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(color: AppColors.primaryPurple, width: 1.8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _isSaving ? null : _savePricing,
+            icon: _isSaving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.check_rounded, size: 18),
+            label: Text(_isSaving ? 'Updating...' : 'Save Rates'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primaryPurple,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+
+    if (widget.embedded) {
+      return content;
+    }
+
+    return GlassContainer(
+      borderRadius: 24,
+      padding: const EdgeInsets.all(20),
+      child: content,
     );
   }
 }
-
 
 /// VendorUpiCard provides an in-app viewer and editor for the vendor's UPI ID (VPA),
 /// synced live with the backend via PATCH /api/vendors/{vendor_id}/upi.

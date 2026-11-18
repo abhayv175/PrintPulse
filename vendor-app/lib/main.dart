@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'config/api_config.dart';
 import 'screens/auth_screen.dart';
@@ -62,6 +63,23 @@ Future<String> loadNormalizedShopUrl(SharedPreferences prefs) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Hide the bottom system gesture/navigation bar while keeping the top status bar visible
+  await SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.top],
+  );
+
+  // Automatically re-hide the bottom system gesture bar after 2 seconds if temporarily revealed by user swipe
+  SystemChrome.setSystemUIChangeCallback((systemOverlaysAreVisible) async {
+    if (systemOverlaysAreVisible) {
+      await Future.delayed(const Duration(seconds: 2));
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [SystemUiOverlay.top],
+      );
+    }
+  });
 
   final prefs = await SharedPreferences.getInstance();
   final savedVendorId = prefs.getString('vendor_id');
