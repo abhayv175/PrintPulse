@@ -74,6 +74,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _bwPagesPrinted = 0;
   int _colorPagesPrinted = 0;
   String _vendorUpiId = 'shop@okaxis';
+  String _shopName = 'PrintPulse Shop';
+  String _vendorEmail = '';
+  String _vendorPhone = '';
+  bool _shopIsOpen = true;
+  bool _autoSpool = true;
+  final String _defaultPrinter = 'System Default / Wi-Fi Spooler - Ready';
+  final String _paperSize = 'A4 Standard (210 × 297 mm)';
 
   WebSocketChannel? _channel;
   StreamSubscription? _channelSub;
@@ -91,6 +98,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _pageValueNotifier = ValueNotifier<double>(_currentPageValue);
     _pageController = PageController(initialPage: _currentTabIndex);
     _pageController.addListener(_handlePageScroll);
+    _loadProfileSettings();
     _loadVendorUpi();
     _loadInitialOrders();
     _loadVendorStats();
@@ -161,6 +169,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       } catch (_) {}
     });
+  }
+
+  Future<void> _loadProfileSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        final cachedShop = prefs.getString('shop_name');
+        if (cachedShop != null && cachedShop.trim().isNotEmpty) {
+          _shopName = cachedShop.trim();
+        } else {
+          final prefix = widget.vendorId.split('@').first;
+          final clean = prefix.replaceAll(RegExp(r'[^a-zA-Z0-9]'), ' ').trim();
+          _shopName = clean.isNotEmpty ? '$clean Kiosk' : 'PrintPulse Kiosk';
+        }
+
+        final cachedEmail = prefs.getString('email');
+        if (cachedEmail != null && cachedEmail.trim().isNotEmpty) {
+          _vendorEmail = cachedEmail.trim();
+        } else if (widget.vendorId.contains('@')) {
+          _vendorEmail = widget.vendorId;
+        } else {
+          _vendorEmail = '${widget.vendorId}@printpulse.app';
+        }
+
+        final cachedPhone = prefs.getString('phone');
+        if (cachedPhone != null && cachedPhone.trim().isNotEmpty) {
+          _vendorPhone = cachedPhone.trim();
+        }
+
+        _shopIsOpen = prefs.getBool('shop_is_open') ?? true;
+        _autoSpool = prefs.getBool('printer_auto_spool') ?? true;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _toggleShopStatus(bool value) async {
+    setState(() => _shopIsOpen = value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('shop_is_open', value);
+    } catch (_) {}
+  }
+
+  Future<void> _toggleAutoSpool(bool value) async {
+    setState(() => _autoSpool = value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('printer_auto_spool', value);
+    } catch (_) {}
   }
 
   Future<void> _loadVendorUpi() async {
@@ -283,8 +341,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _updateVendorUpi(String newUpi) async {
     final trimmed = newUpi.trim();
     if (trimmed.isEmpty || !trimmed.contains('@')) return;
+    final client = widget.testHttpClient ?? http.Client();
+    final bool ownsClient = widget.testHttpClient == null;
     try {
-      final res = await http.post(
+      final res = await client.post(
         ApiConfig.updateVendorUpiUri(widget.vendorId),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'upi_id': trimmed}),
@@ -324,198 +384,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         );
       }
-    }
-  }
-
-  bool _isAutoDetectingServer = false;
-
-  Future<void> _handleAutoDetectServer() async {
-    setState(() => _isAutoDetectingServer = true);
-    try {
-      final discoveredIp = await ApiConfig.discoverServerIp(timeoutMs: 2000);
-      if (discoveredIp != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('host_ip', discoveredIp);
-        await prefs.setString('api_host', ApiConfig.baseHost);
-        await prefs.setString('host_url', ApiConfig.restBaseUrl);
-        final newShopUrl = ApiConfig.customerShopUrl(widget.vendorId);
-        await prefs.setString('shop_url', newShopUrl);
-
-        if (!mounted) return;
-        setState(() {});
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text('Connected to server at ${ApiConfig.restBaseUrl}!'),
-                ),
-              ],
-            ),
-            backgroundColor: AppColors.successGreen,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('No server beacon found on local Wi-Fi. You can enter IP manually.'),
-            backgroundColor: Colors.orange.shade800,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            action: SnackBarAction(
-              label: 'Enter IP',
-              textColor: Colors.white,
-              onPressed: _showEditHostDialog,
-            ),
-          ),
-        );
-      }
     } finally {
-      if (mounted) setState(() => _isAutoDetectingServer = false);
-    }
-  }
-
-  Future<void> _showEditHostDialog() async {
-    final controller = TextEditingController(text: ApiConfig.hostIp);
-    final result = await _showAnimatedModal<String>(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.65),
-      builder: (ctx) {
-        final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1735) : Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.12)
-                      : const Color(0xFFE5E7EB),
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Configure Server Host',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : AppColors.lightTextPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Enter your server URL or IP (e.g. jh0yc.aiccloud.online) serving PrintPulse.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: isDark ? Colors.white70 : const Color(0xFF6B7280),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.url,
-                    decoration: InputDecoration(
-                      hintText: 'jh0yc.aiccloud.online',
-                      prefixIcon: const Icon(Icons.dns_rounded),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.of(ctx).pop(),
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            backgroundColor: isDark
-                                ? Colors.white.withValues(alpha: 0.08)
-                                : const Color(0xFFF3F4F6),
-                          ),
-                          child: Text(
-                            'Cancel',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: isDark ? Colors.white : const Color(0xFF374151),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            final val = controller.text.trim();
-                            if (val.isNotEmpty) {
-                              Navigator.of(ctx).pop(val);
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            backgroundColor: AppColors.primaryPurple,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          child: const Text(
-                            'Save Host',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-
-    if (result != null && result.isNotEmpty && result != ApiConfig.hostIp) {
-      ApiConfig.hostIp = result;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('host_ip', result);
-      await prefs.setString('api_host', ApiConfig.baseHost);
-      await prefs.setString('host_url', ApiConfig.restBaseUrl);
-      final newShopUrl = ApiConfig.customerShopUrl(widget.vendorId);
-      await prefs.setString('shop_url', newShopUrl);
-
-      if (!mounted) return;
-      setState(() {});
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Host updated to ${ApiConfig.restBaseUrl}'),
-          backgroundColor: AppColors.successGreen,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      if (ownsClient) client.close();
     }
   }
 
@@ -2297,14 +2167,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           letterSpacing: -0.4,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Terminal ID: ${widget.vendorId}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: secondaryTextColor,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -3541,7 +3403,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 18),
 
-            // Vendor Account Card
+            // Shop / Vendor Details Card
             GlassContainer(
               borderRadius: 24,
               padding: const EdgeInsets.all(20),
@@ -3567,7 +3429,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              widget.vendorId,
+                              _shopName,
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -3576,8 +3438,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Active Kiosk Terminal',
+                              widget.vendorId,
                               style: TextStyle(fontSize: 12.5, color: secondaryTextColor),
+                            ),
+                            const SizedBox(height: 2),
+                            Row(
+                              children: [
+                                Text(
+                                  _vendorEmail.isNotEmpty ? _vendorEmail : '${widget.vendorId}@printpulse.app',
+                                  style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
+                                ),
+                                if (_vendorPhone.isNotEmpty) ...[
+                                  Text(' • ', style: TextStyle(fontSize: 11.5, color: secondaryTextColor)),
+                                  Text(
+                                    _vendorPhone,
+                                    style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
+                                  ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
@@ -3591,379 +3469,606 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     color: Color(0x1A7C3AED),
                   ),
                   const SizedBox(height: 14),
-                // Customer Shop Portal URL with copy button
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
+                  // Shop Status Toggle: Open for Orders vs Closed
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Customer Web Portal',
-                            style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
+                            'Shop Status',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: primaryTextColor,
+                            ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            _resolvedShopUrl,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              color: AppColors.primaryPurple,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            _shopIsOpen ? 'Open for walk-in & online orders' : 'Closed for new print orders',
+                            style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
                           ),
                         ],
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.copy_rounded, size: 18, color: AppColors.primaryPurple),
-                      tooltip: 'Copy URL',
-                      onPressed: () {
-                        Clipboard.setData(ClipboardData(
-                          text: _resolvedShopUrl,
-                        ));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Portal URL copied to clipboard'),
-                            backgroundColor: AppColors.primaryPurple,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0),
-
-          const SizedBox(height: 20),
-
-          // Theme Selector Card
-          ListenableBuilder(
-            listenable: globalThemeController,
-            builder: (context, _) {
-              final currentMode = globalThemeController.themeMode;
-
-              return GlassContainer(
-                borderRadius: 24,
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.palette_outlined, size: 20, color: AppColors.primaryPurple),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Theme & Appearance',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: primaryTextColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    // 3-way Segmented Buttons (Light, Dark, System)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildThemeSegmentOption(
-                            label: 'Light',
-                            icon: Icons.light_mode_rounded,
-                            isSelected: currentMode == ThemeMode.light,
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              globalThemeController.setThemeMode(ThemeMode.light);
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildThemeSegmentOption(
-                            label: 'Dark',
-                            icon: Icons.dark_mode_rounded,
-                            isSelected: currentMode == ThemeMode.dark,
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              globalThemeController.setThemeMode(ThemeMode.dark);
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _buildThemeSegmentOption(
-                            label: 'System',
-                            icon: Icons.brightness_auto_rounded,
-                            isSelected: currentMode == ThemeMode.system,
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              globalThemeController.setThemeMode(ThemeMode.system);
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            },
-          ).animate().fadeIn(duration: 400.ms, delay: 100.ms).slideY(begin: 0.1, end: 0),
-
-          const SizedBox(height: 20),
-
-          // Print Pricing (INR) Configuration Card
-          PrintPricingCard(
-            vendorId: widget.vendorId,
-            httpClient: widget.testHttpClient,
-          ).animate().fadeIn(duration: 400.ms, delay: 150.ms).slideY(begin: 0.1, end: 0),
-
-          const SizedBox(height: 20),
-
-          // App Configuration Card
-          GlassContainer(
-            borderRadius: 24,
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.dns_rounded, size: 20, color: AppColors.primaryPurple),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Network & Host Configuration',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: primaryTextColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                    IconButton(
-                      tooltip: 'Auto-detect local server',
-                      icon: _isAutoDetectingServer
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primaryPurple),
-                            )
-                          : const Icon(Icons.wifi_find_rounded, size: 20, color: AppColors.primaryPurple),
-                      onPressed: _isAutoDetectingServer ? null : _handleAutoDetectServer,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('API Server Host', style: TextStyle(color: secondaryTextColor, fontSize: 13)),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: GestureDetector(
-                        onTap: _showEditHostDialog,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: palette.subtlePillBg,
-                            borderRadius: BorderRadius.circular(9999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  ApiConfig.restBaseUrl,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.primaryPurple,
-                                  ),
-                                ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: (_shopIsOpen ? AppColors.successGreen : AppColors.warningOrange).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(9999),
+                              border: Border.all(
+                                color: (_shopIsOpen ? AppColors.successGreen : AppColors.warningOrange).withValues(alpha: 0.3),
                               ),
-                              const SizedBox(width: 4),
-                              const Icon(Icons.edit_rounded, size: 12, color: AppColors.primaryPurple),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('WebSocket Endpoint', style: TextStyle(color: secondaryTextColor, fontSize: 13)),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        ApiConfig.webSocketUrl,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontFamily: 'monospace',
-                          color: secondaryTextColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'UPI VPA (Settlement)',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: secondaryTextColor, fontSize: 13),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: GestureDetector(
-                        onTap: _showEditUpiDialog,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.successGreen.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(9999),
-                            border: Border.all(
-                              color: AppColors.successGreen.withValues(alpha: 0.3),
+                            ),
+                            child: Text(
+                              _shopIsOpen ? 'OPEN' : 'CLOSED',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: _shopIsOpen ? AppColors.successGreen : AppColors.warningOrange,
+                              ),
                             ),
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  _vendorUpiId,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.successGreen,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 5),
-                              const Icon(
-                                Icons.edit_rounded,
-                                size: 13,
-                                color: AppColors.successGreen,
-                              ),
-                            ],
+                          const SizedBox(width: 8),
+                          Switch.adaptive(
+                            value: _shopIsOpen,
+                            activeThumbColor: AppColors.successGreen,
+                            onChanged: _toggleShopStatus,
                           ),
-                        ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ).animate().fadeIn(duration: 400.ms, delay: 200.ms).slideY(begin: 0.1, end: 0),
-
-          const SizedBox(height: 20),
-
-          // About the Developer Card
-          Container(
-            decoration: BoxDecoration(
-              color: palette.cardSurface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: palette.devCardBorder,
-                width: 1.0,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: palette.cardPurpleShadow,
-                  blurRadius: 20,
-                  offset: const Offset(0, 4),
-                ),
-                BoxShadow(
-                  color: palette.cardDarkShadow,
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(20),
-                splashColor: const Color(0xFF7C3AED).withValues(alpha: 0.12),
-                highlightColor: const Color(0xFF7C3AED).withValues(alpha: 0.06),
-                onTap: () => _launchDeveloperUrl(context),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: Color(0x1A7C3AED),
+                  ),
+                  const SizedBox(height: 14),
+                  // Customer Shop Portal URL with copy button
+                  Row(
                     children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.code_rounded,
-                          color: Color(0xFF7C3AED),
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'About the Developer',
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.bold,
-                                color: primaryTextColor,
-                              ),
+                              'Customer Web Portal',
+                              style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Abhay Verma • Portfolio',
-                              style: TextStyle(
+                              _resolvedShopUrl,
+                              style: const TextStyle(
                                 fontSize: 12,
-                                color: secondaryTextColor,
+                                fontFamily: 'monospace',
+                                color: AppColors.primaryPurple,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      const Icon(
-                        Icons.arrow_outward_rounded,
-                        size: 20,
-                        color: Color(0xFF7C3AED),
+                      IconButton(
+                        icon: const Icon(Icons.copy_rounded, size: 18, color: AppColors.primaryPurple),
+                        tooltip: 'Copy URL',
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(
+                            text: _resolvedShopUrl,
+                          ));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('Portal URL copied to clipboard'),
+                              backgroundColor: AppColors.primaryPurple,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
-                ),
+                ],
               ),
-            ),
-          ).animate().fadeIn(duration: 400.ms, delay: 250.ms).slideY(begin: 0.1, end: 0),
+            ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0),
 
-          const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
-          // Logout Button
+            // UPI ID Settlement Management Card
+            GlassContainer(
+              borderRadius: 24,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: AppColors.successGreen.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.account_balance_wallet_rounded,
+                              size: 20,
+                              color: AppColors.successGreen,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'UPI ID Management',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryTextColor,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Direct Bank Settlement (0% Fee)',
+                                style: TextStyle(fontSize: 12, color: secondaryTextColor),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.successGreen.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(9999),
+                          border: Border.all(
+                            color: AppColors.successGreen.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.verified_rounded, size: 12, color: AppColors.successGreen),
+                            SizedBox(width: 4),
+                            Text(
+                              'Active',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.successGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: palette.subtlePillBg,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: palette.subtlePillBorder,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Linked VPA',
+                                style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _vendorUpiId,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.successGreen,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: _showEditUpiDialog,
+                          icon: const Icon(Icons.edit_rounded, size: 14),
+                          label: const Text('Edit UPI ID'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primaryPurple,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ).animate().fadeIn(duration: 400.ms, delay: 50.ms).slideY(begin: 0.1, end: 0),
+
+            const SizedBox(height: 20),
+
+            // Printer & Print Preferences Card
+            GlassContainer(
+              borderRadius: 24,
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryPurple.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.print_rounded,
+                          size: 20,
+                          color: AppColors.primaryPurple,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Printer & Spool Preferences',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: primaryTextColor,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Hardware & Format Output',
+                            style: TextStyle(fontSize: 12, color: secondaryTextColor),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Default Printer Status
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Default Printer Status',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: primaryTextColor),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _defaultPrinter,
+                              style: TextStyle(fontSize: 12, color: secondaryTextColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.successGreen.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(9999),
+                          border: Border.all(
+                            color: AppColors.successGreen.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle_rounded, size: 12, color: AppColors.successGreen),
+                            SizedBox(width: 4),
+                            Text(
+                              'Ready',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.successGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1, thickness: 1, color: Color(0x1A7C3AED)),
+                  const SizedBox(height: 12),
+                  // Default Paper Size
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Default Paper Size',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: primaryTextColor),
+                      ),
+                      Text(
+                        _paperSize,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primaryPurple,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(height: 1, thickness: 1, color: Color(0x1A7C3AED)),
+                  const SizedBox(height: 12),
+                  // Auto Spool Toggle
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Auto-Spool Verified Jobs',
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: primaryTextColor),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Automatically dispatch PDF to Android print spooler upon verification',
+                              style: TextStyle(fontSize: 11.5, color: secondaryTextColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Switch.adaptive(
+                        value: _autoSpool,
+                        activeThumbColor: AppColors.primaryPurple,
+                        onChanged: _toggleAutoSpool,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ).animate().fadeIn(duration: 400.ms, delay: 100.ms).slideY(begin: 0.1, end: 0),
+
+            const SizedBox(height: 20),
+
+            // Theme Selector Card
+            ListenableBuilder(
+              listenable: globalThemeController,
+              builder: (context, _) {
+                final currentMode = globalThemeController.themeMode;
+
+                return GlassContainer(
+                  borderRadius: 24,
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.palette_outlined, size: 20, color: AppColors.primaryPurple),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Theme & Appearance',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: primaryTextColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      // 3-way Segmented Buttons (Light, Dark, System)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildThemeSegmentOption(
+                              label: 'Light',
+                              icon: Icons.light_mode_rounded,
+                              isSelected: currentMode == ThemeMode.light,
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                globalThemeController.setThemeMode(ThemeMode.light);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildThemeSegmentOption(
+                              label: 'Dark',
+                              icon: Icons.dark_mode_rounded,
+                              isSelected: currentMode == ThemeMode.dark,
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                globalThemeController.setThemeMode(ThemeMode.dark);
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildThemeSegmentOption(
+                              label: 'System',
+                              icon: Icons.brightness_auto_rounded,
+                              isSelected: currentMode == ThemeMode.system,
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                globalThemeController.setThemeMode(ThemeMode.system);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ).animate().fadeIn(duration: 400.ms, delay: 150.ms).slideY(begin: 0.1, end: 0),
+
+            const SizedBox(height: 20),
+
+            // Print Pricing (INR) Configuration Card
+            PrintPricingCard(
+              vendorId: widget.vendorId,
+              httpClient: widget.testHttpClient,
+            ).animate().fadeIn(duration: 400.ms, delay: 200.ms).slideY(begin: 0.1, end: 0),
+
+            const SizedBox(height: 20),
+
+            // App Info & Support Card
+            Container(
+              decoration: BoxDecoration(
+                color: palette.cardSurface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: palette.devCardBorder,
+                  width: 1.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: palette.cardPurpleShadow,
+                    blurRadius: 20,
+                    offset: const Offset(0, 4),
+                  ),
+                  BoxShadow(
+                    color: palette.cardDarkShadow,
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      splashColor: const Color(0xFF7C3AED).withValues(alpha: 0.12),
+                      highlightColor: const Color(0xFF7C3AED).withValues(alpha: 0.06),
+                      onTap: () => _launchDeveloperUrl(context),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.code_rounded,
+                                color: Color(0xFF7C3AED),
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'About the Developer',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                      color: primaryTextColor,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Abhay Verma • Portfolio',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: secondaryTextColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            const Icon(
+                              Icons.arrow_outward_rounded,
+                              size: 20,
+                              color: Color(0xFF7C3AED),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 1, thickness: 1, color: Color(0x1A7C3AED)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.primaryPurple),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Version',
+                              style: TextStyle(fontSize: 13, color: secondaryTextColor),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: palette.subtlePillBg,
+                            borderRadius: BorderRadius.circular(9999),
+                            border: Border.all(color: palette.subtlePillBorder),
+                          ),
+                          child: const Text(
+                            'v1.0.0 (Production Release)',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primaryPurple,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ).animate().fadeIn(duration: 400.ms, delay: 250.ms).slideY(begin: 0.1, end: 0),
+
+            const SizedBox(height: 24),
+
+            // Logout Button
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(

@@ -26,40 +26,6 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  void _showEditHostDialog() {
-    final controller = TextEditingController(text: ApiConfig.hostIp);
-    showDialog(
-      context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('Server Host IP'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Server URL / Host',
-            hintText: 'jh0yc.aiccloud.online',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogCtx).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final newIp = controller.text.trim();
-              if (newIp.isNotEmpty) {
-                ApiConfig.hostIp = newIp;
-                setState(() {});
-              }
-              Navigator.of(dialogCtx).pop();
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _handleGoogleSignIn() async {
     setState(() {
       _isLoading = true;
@@ -250,10 +216,7 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final palette = PrintPulsePalette.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final primaryTextColor = theme.colorScheme.onSurface;
-    final secondaryTextColor = theme.textTheme.bodyMedium?.color ??
-        (isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary);
 
     return Scaffold(
       body: AnimatedBackground(
@@ -355,7 +318,7 @@ class _AuthScreenState extends State<AuthScreen> {
                                       ),
                                     ),
                                     child: Text(
-                                      'Kiosk & Live Order Terminal',
+                                      'Printing made easier',
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
@@ -527,57 +490,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
 
-                        // Minimal Bottom Host Status Badge with Breathing Room (Tap to change IP)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 40, bottom: 8),
-                          child: GestureDetector(
-                            onTap: _showEditHostDialog,
-                            behavior: HitTestBehavior.opaque,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: palette.subtlePillBg,
-                                borderRadius: BorderRadius.circular(9999),
-                                border: Border.all(
-                                  color: palette.subtlePillBorder,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 7,
-                                    height: 7,
-                                    decoration: const BoxDecoration(
-                                      color: AppColors.successGreen,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      'Host: ${ApiConfig.baseHost}',
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: secondaryTextColor,
-                                        fontFamily: 'monospace',
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ).animate().fadeIn(
-                              delay: 550.ms,
-                              duration: 300.ms,
-                              curve: Curves.easeOut,
-                            ),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),

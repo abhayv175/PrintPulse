@@ -190,51 +190,166 @@ class HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  /// Presents a confirmation dialog before deleting all completed and rejected order history.
-  Future<void> _confirmDeleteAllHistory() async {
-    final bool? confirmed = await showDialog<bool>(
+  /// Presents modals with a smooth scale + fade entrance instead of an abrupt pop-in.
+  Future<T?> _showAnimatedModal<T>({
+    required BuildContext context,
+    required WidgetBuilder builder,
+    Color? barrierColor,
+  }) {
+    return showGeneralDialog<T>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.delete_forever_rounded, color: AppColors.dangerRed, size: 24),
-            SizedBox(width: 10),
-            Text(
-              'Delete All History',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-          ],
-        ),
-        content: const Text(
-          'Delete all order history? This action cannot be undone.',
-          style: TextStyle(fontSize: 14, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(fontWeight: FontWeight.w600),
-            ),
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      barrierColor: barrierColor ?? Colors.black.withValues(alpha: 0.55),
+      transitionDuration: const Duration(milliseconds: 320),
+      pageBuilder: (dialogCtx, anim1, anim2) => builder(dialogCtx),
+      transitionBuilder: (dialogCtx, anim, secondaryAnim, child) {
+        final double scaleValue = anim.status == AnimationStatus.reverse
+            ? Curves.easeInCubic.transform(anim.value)
+            : Curves.easeOutBack.transform(anim.value);
+        return Transform.scale(
+          scale: scaleValue,
+          child: Opacity(
+            opacity: anim.value.clamp(0.0, 1.0),
+            child: child,
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.dangerRed,
-              foregroundColor: Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+        );
+      },
+    );
+  }
+
+  Widget _buildDeleteConfirmDialog(BuildContext ctx) {
+    final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
+    final Color surfaceColor =
+        isDark ? const Color(0xFF1E1735) : Colors.white;
+    final Color borderColor =
+        isDark ? Colors.white.withValues(alpha: 0.12) : const Color(0xFFE5E7EB);
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+          decoration: BoxDecoration(
+            color: surfaceColor,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: borderColor, width: 1.0),
+            boxShadow: isDark
+                ? const []
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 28,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Warning Icon Badge
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.redAccent.withValues(alpha: 0.12),
+                ),
+                child: const Icon(
+                  Icons.delete_forever_rounded,
+                  size: 24,
+                  color: Colors.redAccent,
+                ),
               ),
-            ),
-            child: const Text(
-              'Delete',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+              const SizedBox(height: 16),
+              // Title
+              Text(
+                'Delete All History?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white : AppColors.lightTextPrimary,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Description
+              Text(
+                'Are you sure you want to delete all order history? This permanently removes completed and cancelled records from the server and cannot be undone.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  height: 1.45,
+                  color: isDark ? Colors.white70 : const Color(0xFF6B7280),
+                ),
+              ),
+              const SizedBox(height: 24),
+              // Full-width balanced action row
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        backgroundColor: isDark
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : const Color(0xFFF3F4F6),
+                      ),
+                      child: Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color:
+                              isDark ? Colors.white : const Color(0xFF374151),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        elevation: 0,
+                        backgroundColor: const Color(0xFFEF4444),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'Delete',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-        ],
+        ),
       ),
+    );
+  }
+
+  /// Presents an opaque, smooth confirmation dialog before deleting all completed and rejected order history.
+  Future<void> _confirmDeleteAllHistory() async {
+    final bool? confirmed = await _showAnimatedModal<bool>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.65),
+      builder: (ctx) => _buildDeleteConfirmDialog(ctx),
     );
 
     if (confirmed == true) {
@@ -242,16 +357,31 @@ class HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
-  /// Clears all completed and rejected order history locally without network calls.
-  /// Persists order IDs to hidden_history_ids in SharedPreferences so they remain hidden across restarts.
+  /// Permanently deletes all completed and historical orders from the backend database/store,
+  /// and clears all locally cached history state so records never reappear.
   Future<void> _executeDeleteAllHistory() async {
     if (_isDeletingHistory) return;
     setState(() {
       _isDeletingHistory = true;
     });
 
+    final client = widget.testHttpClient ?? http.Client();
+    final bool ownsClient = widget.testHttpClient == null;
+
     try {
-      // 1. Collect all order IDs currently shown in Order History and locally cached
+      // 1. Send permanent DELETE request to the backend history endpoint
+      try {
+        final uri = ApiConfig.deleteVendorHistoryUri(widget.vendorId);
+        final response =
+            await client.delete(uri).timeout(const Duration(seconds: 5));
+        debugPrint(
+            'HistoryScreen: Server DELETE history returned HTTP ${response.statusCode}');
+      } catch (networkError) {
+        debugPrint(
+            'HistoryScreen: Network error while sending DELETE history: $networkError');
+      }
+
+      // 2. Collect order IDs and persist to hidden_history_ids in SharedPreferences as local backup
       final Set<String> idsToHide = _orders
           .map((j) => j.orderId.trim())
           .where((id) => id.isNotEmpty)
@@ -265,12 +395,10 @@ class HistoryScreenState extends State<HistoryScreen> {
             idsToHide.add(job.orderId.trim());
           }
         }
+        await OrderHistoryService.addHiddenOrderIds(idsToHide);
       } catch (_) {}
 
-      // 2. Persist to hidden_history_ids in SharedPreferences
-      await OrderHistoryService.addHiddenOrderIds(idsToHide);
-
-      // 3. Clear local storage files and prefs for this vendor
+      // 3. Clear local storage files and preferences for this vendor
       await OrderHistoryService.clearLocalHistory(widget.vendorId);
 
       // 4. Clear displayed history list in state immediately
@@ -311,12 +439,14 @@ class HistoryScreenState extends State<HistoryScreen> {
         );
       }
     } catch (e) {
-      debugPrint('HistoryScreen: Error clearing history locally: $e');
+      debugPrint('HistoryScreen: Error deleting history: $e');
       if (mounted) {
         setState(() {
           _isDeletingHistory = false;
         });
       }
+    } finally {
+      if (ownsClient) client.close();
     }
   }
 

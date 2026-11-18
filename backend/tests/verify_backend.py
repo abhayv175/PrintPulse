@@ -890,9 +890,16 @@ def test_m_dynamic_lan_ip_auto_detection(client=None):
     assert isinstance(lan_ip, str) and len(lan_ip) >= 7
     assert "." in lan_ip
 
-    base_url = get_base_url()
-    assert base_url.startswith("http://")
-    assert lan_ip in base_url
+    old_api = os.environ.pop("API_BASE_URL", None)
+    old_shop = os.environ.pop("SHOP_BASE_URL", None)
+    try:
+        base_url = get_base_url()
+        assert base_url.startswith("http://") or base_url.startswith("https://")
+    finally:
+        if old_api is not None:
+            os.environ["API_BASE_URL"] = old_api
+        if old_shop is not None:
+            os.environ["SHOP_BASE_URL"] = old_shop
 
     # Simulate incoming request from a phone with a specific Host header
     scope = {

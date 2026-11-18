@@ -357,6 +357,21 @@ async def delete_vendor_history(vendor_id: str):
     if deleted_count > 0:
         save_orders_to_disk()
 
+    # Also permanently clean up from Prisma MongoDB if running
+    try:
+        from prisma import Prisma
+        db = Prisma()
+        if not db.is_connected():
+            await db.connect()
+        await db.printjob.delete_many(
+            where={
+                "vendor_id": clean_vendor_id,
+                "status": {"in": ["completed", "rejected", "cancelled"]},
+            }
+        )
+    except Exception:
+        pass
+
     return {
         "success": True,
         "message": f"Deleted {deleted_count} completed/rejected order history record(s) for vendor '{clean_vendor_id}'.",

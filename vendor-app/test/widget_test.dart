@@ -47,9 +47,9 @@ void main() {
 
     expect(find.byType(AuthScreen), findsOneWidget);
     expect(find.text('PrintPulse'), findsOneWidget);
-    expect(find.text('Kiosk & Live Order Terminal'), findsOneWidget);
+    expect(find.text('Printing made easier'), findsOneWidget);
     expect(find.text('Sign in with Google'), findsOneWidget);
-    expect(find.text('Host: ${ApiConfig.baseHost}'), findsOneWidget);
+    expect(find.text('Host: ${ApiConfig.baseHost}'), findsNothing);
     expect(find.text('Vendor Sign-In'), findsNothing);
   });
 
@@ -316,8 +316,9 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    // Home tab badge displays Terminal ID with the derived email prefix.
-    expect(find.text('Terminal ID: $derivedVendorId'), findsOneWidget);
+    // Home tab displays clean greeting header with no hardcoded terminal ID.
+    expect(find.text('Good day, Vendor 👋'), findsOneWidget);
+    expect(find.text('Terminal ID: $derivedVendorId'), findsNothing);
 
     // Profile tab displays the derived vendor ID and customer shop URL.
     await tester.tap(find.text('Profile'));
@@ -325,8 +326,6 @@ void main() {
 
     expect(find.text(derivedVendorId), findsOneWidget);
     expect(find.text(expectedUrl), findsOneWidget);
-    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
-    expect(find.text('wss://jh0yc.aiccloud.online'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -480,9 +479,9 @@ void main() {
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
 
-    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
-    expect(find.text('wss://jh0yc.aiccloud.online'), findsOneWidget);
+    expect(ApiConfig.restBaseUrl, 'https://jh0yc.aiccloud.online');
     expect(find.text('https://jh0yc.aiccloud.online/shop/abhayv175'), findsOneWidget);
+    expect(find.text('abhayv175'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -875,7 +874,7 @@ void main() {
   });
 
   testWidgets(
-      'ApiConfig dynamically reconfigures endpoints and Profile screen provides auto-detect & edit UI',
+      'ApiConfig dynamically reconfigures endpoints and Profile screen provides UPI ID management and shop details',
       (WidgetTester tester) async {
     // 1. Dynamic IP reconfiguration test
     final originalIp = ApiConfig.hostIp;
@@ -914,18 +913,11 @@ void main() {
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
 
-    // Verify auto-detect button exists and scroll it into view
-    final autoDetectFinder = find.byIcon(Icons.wifi_find_rounded);
-    expect(autoDetectFinder, findsOneWidget);
-    await tester.ensureVisible(autoDetectFinder);
-    await tester.pumpAndSettle();
-
-    expect(find.text('https://jh0yc.aiccloud.online'), findsOneWidget);
-
-    // Tap Auto-Detect button (it completes gracefully even if no beacon on loopback)
-    await tester.tap(autoDetectFinder, warnIfMissed: false);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 3));
+    // Verify UPI ID Management, Shop Details, and Printer Preferences cards exist
+    expect(find.text('UPI ID Management'), findsOneWidget);
+    expect(find.text('Shop Status'), findsOneWidget);
+    expect(find.text('Printer & Spool Preferences'), findsOneWidget);
+    expect(find.text('Edit UPI ID'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2247,7 +2239,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('History screen header displays Delete All History button and cleans up locally on confirm',
+  testWidgets('History screen header displays Delete All History button and permanently deletes history on confirm',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     bool deleteNetworkCalled = false;
@@ -2308,16 +2300,16 @@ void main() {
     await tester.tap(find.text('Delete All History'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text('Delete all order history? This action cannot be undone.'), findsOneWidget);
+    expect(find.byType(Dialog), findsWidgets);
+    expect(find.text('Delete All History?'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);
     expect(find.text('Delete'), findsOneWidget);
 
-    // 3. Confirm deletion (100% local: no network DELETE call)
+    // 3. Confirm deletion (Permanent: sends network DELETE call to server)
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
 
-    expect(deleteNetworkCalled, isFalse);
+    expect(deleteNetworkCalled, isTrue);
     expect(find.text('Aarav Patel'), findsNothing);
     expect(find.text('History cleared'), findsOneWidget);
     expect(find.text('₹0.00'), findsOneWidget);
