@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="2.25"
+        android:scaleY="2.25"
+        android:translateX="27"
+        android:translateY="27">
+        <!-- Top Paper Feed Tray -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M6,9 V2 H18 V9" />
+        <!-- Main Printer Chassis -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M6,18 H4 A2,2 0 0,1 2,16 V11 A2,2 0 0,1 4,9 H20 A2,2 0 0,1 22,11 V16 A2,2 0 0,1 20,18 H18" />
+        <!-- Bottom Printed Document Sheet -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2.4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M6,15.5 A1.5,1.5 0 0,1 7.5,14 H16.5 A1.5,1.5 0 0,1 18,15.5 V20.5 A1.5,1.5 0 0,1 16.5,22 H7.5 A1.5,1.5 0 0,1 6,20.5 Z" />
+    </group>
+</vector>
