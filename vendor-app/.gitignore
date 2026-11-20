@@ -50,5 +50,13 @@ app.*.map.json
 key.properties
 **/key.properties
 
+# Firebase & Google Services Credentials & API Keys
+*google-services.json
+**/google-services.json
+GoogleService-Info.plist
+**/GoogleService-Info.plist
+lib/config/google_auth_config.dart
+**/google_auth_config.dart
+
 # Widget Preview related
 .widget_preview/
