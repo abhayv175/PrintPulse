@@ -105,6 +105,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     // Initialize notification service and request Android 13+ permission on startup
     NotificationService.initialize();
+    NotificationService.subscribeToVendorTopic(widget.vendorId);
 
     // Redundant fallback polling to detect new orders even if socket drops
     _pollingTimer = Timer.periodic(const Duration(seconds: 5), (_) {

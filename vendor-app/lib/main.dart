@@ -1,9 +1,12 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'config/api_config.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'services/notification_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
 
@@ -61,8 +64,34 @@ Future<String> loadNormalizedShopUrl(SharedPreferences prefs) async {
   return normalizedShopUrl;
 }
 
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+    final title =
+        message.notification?.title ?? message.data['title'] ?? 'New Print Job';
+    final body =
+        message.notification?.body ?? message.data['body'] ?? 'New order received';
+    final payload = message.data['order_id'] ?? message.data['payload'];
+    await NotificationService.showJobNotification(
+      title: title,
+      body: body,
+      payload: payload,
+    );
+  } catch (e) {
+    debugPrint('FCM background handler error: $e');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  } catch (e) {
+    debugPrint('Firebase init note on startup: $e');
+  }
 
   // Hide the bottom system gesture/navigation bar while keeping the top status bar visible
   await SystemChrome.setEnabledSystemUIMode(
@@ -87,6 +116,9 @@ void main() async {
 
   activeVendorIdNotifier.value = savedVendorId;
   activeShopUrlNotifier.value = savedShopUrl;
+
+  // Initialize notifications on boot
+  NotificationService.initialize();
 
   runApp(PrintPulseVendorApp(
     initialVendorId: savedVendorId,

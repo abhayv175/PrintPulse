@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
 import '../main.dart';
 import '../services/google_auth_service.dart';
+import '../services/notification_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animated_background.dart';
 import '../widgets/onboarding_dialog.dart';
@@ -131,6 +132,16 @@ class _AuthScreenState extends State<AuthScreen> {
 
         // Dismiss any active SnackBars before route transition
         ScaffoldMessenger.of(context).clearSnackBars();
+
+        // Request notification permission when logging in so real-time order alerts appear
+        try {
+          await NotificationService.requestPermission();
+          NotificationService.subscribeToVendorTopic(vendorId);
+        } catch (e) {
+          debugPrint('Notification permission request error on login: $e');
+        }
+
+        if (!mounted) return;
 
         // Update top-level auth state declaratively
         activeVendorIdNotifier.value = vendorId;

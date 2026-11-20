@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -38,7 +40,7 @@ class NotificationService {
 
     try {
       const AndroidInitializationSettings androidSettings =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
+          AndroidInitializationSettings('ic_notification');
 
       const DarwinInitializationSettings iosSettings =
           DarwinInitializationSettings(
@@ -82,9 +84,95 @@ class NotificationService {
 
       _initialized = true;
       debugPrint('NotificationService initialized with channel $channelId');
+
+      // Initialize Firebase & FCM listeners safely
+      try {
+        await Firebase.initializeApp();
+        await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+
+        FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+          debugPrint('FCM Foreground onMessage: ${message.data}');
+          final title = message.notification?.title ?? message.data['title'] ?? 'New Print Job';
+          final body = message.notification?.body ?? message.data['body'] ?? 'New order received';
+          final payload = message.data['order_id'] ?? message.data['payload'];
+          alertNewJob(
+            title: title,
+            body: body,
+            payload: payload,
+          );
+        });
+      } catch (fcmErr) {
+        debugPrint('FCM initialization note: $fcmErr');
+      }
     } catch (e) {
       debugPrint('NotificationService initialize error: $e');
     }
+  }
+
+  /// Subscribes to vendor-specific FCM topic so background pushes wake up the device
+  static Future<void> subscribeToVendorTopic(String vendorId) async {
+    try {
+      final clean = vendorId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      if (clean.isNotEmpty) {
+        await FirebaseMessaging.instance.subscribeToTopic('vendor-$clean');
+        await FirebaseMessaging.instance.subscribeToTopic('all_vendors');
+        debugPrint('Subscribed to FCM topic: vendor-$clean');
+        try {
+          final token = await FirebaseMessaging.instance.getToken();
+          debugPrint('FCM_DEVICE_TOKEN: $token');
+        } catch (e) {
+          debugPrint('Error getting FCM token: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('FCM subscribe topic note: $e');
+    }
+  }
+
+  /// Explicitly requests notification permissions from the host platform (Android 13+ / iOS).
+  /// Calls [initialize] first if not already initialized.
+  static Future<bool?> requestPermission() async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final androidImplementation = _notificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        if (androidImplementation != null) {
+          final granted =
+              await androidImplementation.requestNotificationsPermission();
+          debugPrint('Android Notification Permission Granted: $granted');
+          return granted;
+        }
+      } catch (platformErr) {
+        debugPrint('Error requesting Android notification permission: $platformErr');
+      }
+    } else if (!kIsWeb && Platform.isIOS) {
+      try {
+        final iosImplementation = _notificationsPlugin
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>();
+        if (iosImplementation != null) {
+          final granted = await iosImplementation.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+          );
+          debugPrint('iOS Notification Permission Granted: $granted');
+          return granted;
+        }
+      } catch (platformErr) {
+        debugPrint('Error requesting iOS notification permission: $platformErr');
+      }
+    }
+    return null;
   }
 
   /// Displays a heads-up system notification banner and triggers vibration / native sound.
@@ -95,6 +183,10 @@ class NotificationService {
     int? notificationId,
   }) async {
     try {
+      if (!_initialized) {
+        await initialize();
+      }
+
       final id = notificationId ?? ++_notificationCounter;
 
       const AndroidNotificationDetails androidDetails =
@@ -103,13 +195,15 @@ class NotificationService {
         channelName,
         channelDescription: channelDescription,
         importance: Importance.max,
-        priority: Priority.high,
+        priority: Priority.max,
         playSound: true,
         sound: RawResourceAndroidNotificationSound('new_job'),
         enableVibration: true,
-        icon: '@mipmap/ic_launcher',
-        category: AndroidNotificationCategory.call,
+        icon: 'ic_notification',
+        largeIcon: DrawableResourceAndroidBitmap('app_icon'),
+        category: AndroidNotificationCategory.event,
         visibility: NotificationVisibility.public,
+        channelShowBadge: true,
       );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
@@ -148,7 +242,35 @@ class NotificationService {
 
       // Play via AudioPlayer with asset source fallback to synthesized SoundService WAV
       _foregroundPlayer ??= AudioPlayer();
-      await _foregroundPlayer!.stop();
+
+      // Route audio via notification/sonification stream so sound is audible even when media volume is muted
+      try {
+        await _foregroundPlayer!.setAudioContext(
+          AudioContext(
+            android: const AudioContextAndroid(
+              isSpeakerphoneOn: true,
+              stayAwake: true,
+              contentType: AndroidContentType.sonification,
+              usageType: AndroidUsageType.notification,
+              audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+            ),
+            iOS: AudioContextIOS(
+              category: AVAudioSessionCategory.ambient,
+              options: const {
+                AVAudioSessionOptions.mixWithOthers,
+                AVAudioSessionOptions.duckOthers,
+              },
+            ),
+          ),
+        );
+      } catch (_) {}
+
+      // Seek to beginning if already playing to avoid stopping sound during rapid event bursts
+      if (_foregroundPlayer!.state == PlayerState.playing) {
+        await _foregroundPlayer!.seek(Duration.zero);
+      } else {
+        await _foregroundPlayer!.stop();
+      }
 
       try {
         await _foregroundPlayer!.play(AssetSource('sounds/new_job.mp3'));

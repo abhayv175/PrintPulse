@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "79317197824",
+    "project_id": "printpulse-abhayv175",
+    "storage_bucket": "printpulse-abhayv175.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:79317197824:android:5857f4f6157082e88de4e5",
+        "android_client_info": {
+          "package_name": "com.printpulse.vendors"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC15D89gqiMcheMm7ZYfYybOSkuBD41ZL0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

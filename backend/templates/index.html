@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full">
 <head>
-  <!-- Favicon & Touch Icons -->
+  <!-- Website Tab Favicon -->
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
-  <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="mask-icon" href="/favicon.svg" color="#7C3AED">
   
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -492,8 +492,8 @@
     let queue = [];
     let isCheckoutLocked = false;
     const rates = {
-      bw: Number({{ bw_price | default(2.0) }}),
-      color: Number({{ color_price | default(10.0) }})
+      bw: Number("{{ bw_price | default(2.0) }}"),
+      color: Number("{{ color_price | default(10.0) }}")
     };
 
     const fileInput = document.getElementById('fileInput');
