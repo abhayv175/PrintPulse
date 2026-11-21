@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, WebSocket, WebSocketD
 from pydantic import BaseModel
 from app.core.network import get_base_url
 from app.core.pricing import build_upi_uri, compute_order_amount
+from app.core.fcm import trigger_fcm_notification
 from app.api.routes_upload import ORDERS, delete_order_files, save_orders_to_disk
 from app.api.routes_vendor import (
     ConnectionManager,
@@ -632,6 +633,12 @@ async def select_cash_order(order_id: str):
     # Broadcast status update to customer tracking WebSocket
     await order_ws_manager.broadcast_to_vendor(order_id, cash_event)
     _trigger_pusher(f"vendor-{order['vendor_id']}", "new-job", cash_event)
+    trigger_fcm_notification(
+        order["vendor_id"],
+        title="🚨 New Print Job (Cash)",
+        body=f"Order #{order_id[:8]} • ₹{cash_event['total_amount']}",
+        data=cash_event,
+    )
 
     return {
         "success": True,
@@ -952,6 +959,12 @@ async def claim_paid_order(
     await order_ws_manager.broadcast_to_vendor(order_id, claim_event)
     _trigger_pusher(f"vendor-{order['vendor_id']}", "payment-claimed", claim_event)
     _trigger_pusher(f"order-{order_id}", "payment-claimed", claim_event)
+    trigger_fcm_notification(
+        order["vendor_id"],
+        title="💰 Payment Claimed (UPI)",
+        body=f"Order #{order_id[:8]} • ₹{claim_event['amount']} • UTR: {claim_event['utr_number']}",
+        data=claim_event,
+    )
 
     return {
         "success": True,
@@ -1111,6 +1124,12 @@ async def verify_order_payment(
     _trigger_pusher(f"vendor-{order['vendor_id']}", "new-job", event_payload)
     _trigger_pusher(f"vendor-{order['vendor_id']}", "payment-verified", verified_event)
     _trigger_pusher(f"order-{order_id}", "payment-verified", verified_event)
+    trigger_fcm_notification(
+        order["vendor_id"],
+        title="✅ Order Paid & Ready to Print",
+        body=f"Order #{order_id[:8]} • ₹{event_payload.get('order', {}).get('total_amount', '')}",
+        data=event_payload,
+    )
 
     return {
         "status": "paid",

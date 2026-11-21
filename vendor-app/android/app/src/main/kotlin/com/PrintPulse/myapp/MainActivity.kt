@@ -1,4 +1,4 @@
-package com.printpulse.vendor_app
+package com.PrintPulse.myapp
 
 import android.os.Build
 import android.os.Bundle
