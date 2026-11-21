@@ -4,7 +4,9 @@
 ### Zero-Friction Campus & Retail Print-on-Demand Infrastructure
 
 [![Live Cloud Production](https://img.shields.io/badge/Production-Live%20Cloud-10B981?style=for-the-badge&logo=fastapi&logoColor=white)](https://jh0yc.aiccloud.online/shop/abhayv175)
+[![Official Landing Page](https://img.shields.io/badge/Landing%20Page-printpulse--info-00C7B7?style=for-the-badge&logo=netlify&logoColor=white)](https://printpulse-info.netlify.app)
 [![FastAPI ASGI](https://img.shields.io/badge/FastAPI-0.115.6-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![SQLite WAL Engine](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Flutter Client](https://img.shields.io/badge/Flutter-3.47.9-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev/)
 [![WebSockets Duplex](https://img.shields.io/badge/WebSockets-Sub--50ms-8B5CF6?style=for-the-badge&logo=socketdotio&logoColor=white)](https://websockets.spec.whatwg.org/)
 [![Docker Compose](https://img.shields.io/badge/Docker-Containerized-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
@@ -15,7 +17,7 @@
   Instant web uploads, zero customer app downloads, client-side PDF inspection, direct zero-fee P2P UPI payments, and sub-50ms push spooling to vendor Android tablets.
 </p>
 
-[**🌐 Live Customer Web Portal**](https://jh0yc.aiccloud.online/shop/abhayv175) • [**⚡ Cloud API Documentation**](https://jh0yc.aiccloud.online/docs) • [**📱 Flutter Vendor APK**](#-vendor-android-app-setup) • [**👨‍💻 Portfolio & Architect**](https://abhayv175.netlify.app)
+[**🚀 Landing Page**](https://printpulse-info.netlify.app) • [**🌐 Live Web Portal**](https://jh0yc.aiccloud.online/shop/abhayv175) • [**⚡ Cloud API Docs**](https://jh0yc.aiccloud.online/docs) • [**📱 Flutter Vendor APK**](#-vendor-android-app-setup) • [**🔒 Privacy**](https://printpulse-info.netlify.app/privacy) • [**📜 Terms**](https://printpulse-info.netlify.app/terms) • [**👨‍💻 Architect**](https://abhayv175.netlify.app)
 
 ---
 
@@ -196,7 +198,7 @@ flowchart TD
 
     subgraph Storage["Persistence & Hardware Execution"]
         DISK["Isolated Multi-Tenant Spool<br>/uploads/{vendor_id}/"]
-        STATE["Transactional Order Store<br>Local JSON & File Store"]
+        STATE["Transactional Order Store<br>SQLite WAL Engine (printpulse.db)"]
         SPOOL["Hardware Print Spooler<br>Printing.layoutPdf() → Wi-Fi / USB"]
     end
 
@@ -247,6 +249,61 @@ https://jh0yc.aiccloud.online/shop/{vendor_id}
   ```text
   upi://pay?pa=vendor@upi&pn=Campus%20Kiosk&am=24.00&cu=INR&tr=ORD-B83EBD
   ```
+
+---
+
+## 🗄️ Database Management System & Storage Architecture
+
+PrintPulse uses an embedded, crash-proof **SQLite WAL engine** (`backend/app/core/db.py`) paired with isolated disk spooling. Engineered specifically for low-resource cloud VPS instances (1 vCPU, 1 GB RAM, 10 GB SSD), it replaces flat-file JSON serialization with sub-millisecond atomic transactions and automatic disk lifecycle policies.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                      SQLite WAL Engine (printpulse.db)                 │
+├───────────────────┬──────────────────────────────┬─────────────────────┤
+│   order_id (PK)   │   vendor_id (Indexed)        │   status (Indexed)  │
+├───────────────────┼──────────────────────────────┼─────────────────────┤
+│   total_amount    │   created_at (Indexed)       │   expires_at (Index)│
+├───────────────────┴──────────────────────────────┴─────────────────────┤
+│   files_json / documents_json / payload_json (Full Document Model)    │
+└────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    Automated Physical Disk Enforcement
+                                    ▼
+       ┌────────────────────────────┬────────────────────────────┐
+       │   Max 5 Documents / Vendor │  24-Hour Expiration Loop   │
+       │   Excess PDF files pruned  │  Expired files + DB rows   │
+       │   immediately on upload    │  purged every 15 minutes   │
+       └────────────────────────────┴────────────────────────────┘
+```
+
+### Key Capabilities & Reliability Guardrails
+
+1. **High-Concurrency WAL Mode (`PRAGMA journal_mode = WAL;`)**:
+   * Uses SQLite Write-Ahead Logging to support concurrent readers without blocking incoming write transactions.
+   * `PRAGMA busy_timeout = 5000;` prevents database lock contention under simultaneous customer upload bursts.
+   * Atomic ACID transactions protect against file corruption, truncation, or data loss during sudden VPS power drops or container restarts.
+
+2. **Strict "Max 5 Documents per Vendor" Cap**:
+   * Whenever a vendor receives an order or document upload, `prune_vendor_documents(vendor_id, max_allowed=5)` executes an indexed query:
+     ```sql
+     SELECT order_id, files_json, payload_json FROM orders
+     WHERE vendor_id = ?
+     ORDER BY created_at DESC, rowid DESC
+     LIMIT -1 OFFSET 5;
+     ```
+   * Any orders past the 5 most recent have their physical PDF and image files **immediately unlinked (`os.remove()`)** from `backend/uploads/<vendor_id>/`, and their database rows deleted. A vendor can never quietly fill up server disk space.
+
+3. **24-Hour TTL Expiration & Automated Background Purge**:
+   * Every order is stamped with `expires_at = created_at + 24 hours`.
+   * FastAPI's application lifespan runs an asynchronous background loop (`_periodic_cleanup_loop`) every **15 minutes**.
+   * Expired orders and all associated staged files are permanently wiped from the filesystem and database.
+
+4. **Orphan File Sweep**:
+   * Any abandoned temporary files in `backend/uploads/` older than 2 hours that lack an active reference in SQLite (e.g. from an interrupted customer upload) are safely swept and removed by `_cleanup_orphan_files_on_disk()`.
+
+5. **Dictionary-Compatible Mapping Adapter (`SQLiteOrderStore`)**:
+   * Implements Python's `MutableMapping` interface (`ORDERS[id]`, `ORDERS.get(id)`, `id in ORDERS`, `ORDERS.pop(id)`, `len(ORDERS)`).
+   * Delivers pure SQLite performance and persistence across all routes without modifying existing REST API contracts or client protocols.
 
 ---
 
@@ -304,3 +361,11 @@ flutter build apk --release
 * Portfolio: [abhayv175.netlify.app](https://abhayv175.netlify.app)
 * Live Production Backend: [jh0yc.aiccloud.online](https://jh0yc.aiccloud.online)
 * Technologies: FastAPI • Flutter • WebSockets • Python 3.12 • HTML5/JS • Docker • UPI Protocols
+
+---
+
+## 📄 Legal & Compliance
+
+* **Product Landing Page:** [printpulse-info.netlify.app](https://printpulse-info.netlify.app)
+* **Privacy Policy:** [printpulse-info.netlify.app/privacy](https://printpulse-info.netlify.app/privacy)
+* **Terms of Service:** [printpulse-info.netlify.app/terms](https://printpulse-info.netlify.app/terms)

@@ -25,31 +25,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 DEFAULT_HOST_URL = get_base_url()
 
-# Persistent order store across server reloads
-ORDERS_FILE = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "orders_store.json")
-)
-
-
-def _load_orders() -> Dict[str, dict]:
-    if os.path.exists(ORDERS_FILE):
-        try:
-            with open(ORDERS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def save_orders_to_disk() -> None:
-    try:
-        with open(ORDERS_FILE, "w") as f:
-            json.dump(ORDERS, f, indent=2, default=str)
-    except Exception:
-        pass
-
-
-ORDERS: Dict[str, dict] = _load_orders()
+# Persistent SQLite-backed order store (replaces legacy orders_store.json)
+from app.core.db import ORDERS, save_orders_to_disk
 
 
 @router.post("/batch-upload")

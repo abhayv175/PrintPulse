@@ -12,21 +12,47 @@ from app.api.routes_orders import router as orders_router, websocket_order_statu
 from app.core.network import get_lan_ip, get_base_url, udp_discovery
 
 
+import asyncio
+from app.core.db import init_db, cleanup_expired_orders
+
+
+async def _periodic_cleanup_loop():
+    """Runs every 15 minutes to purge orders and PDF files older than 24 hours."""
+    while True:
+        try:
+            await asyncio.sleep(900)  # 15 minutes
+            purged = cleanup_expired_orders(ttl_hours=24)
+            if purged > 0:
+                print(f"[Cleanup] Purged {purged} expired order(s) and their files from disk.")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Cleanup] Error during periodic 24h cleanup: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle manager: activates local UDP discovery beacon and logs dynamic network endpoints."""
+    """Lifecycle manager: initializes SQLite database, runs discovery, and handles 24h cleanup loop."""
+    init_db()
+    # Initial cleanup pass on startup
+    purged = cleanup_expired_orders(ttl_hours=24)
+    if purged > 0:
+        print(f"[Cleanup] Startup: Purged {purged} expired order(s) and files from disk.")
+
     lan_ip = get_lan_ip()
     base_url = get_base_url()
     print("\n" + "=" * 62)
-    print("  PrintPulse Backend Active")
+    print("  PrintPulse Backend Active (SQLite Storage)")
     print(f"  LAN Serving URL    : {base_url}")
     print(f"  Customer Web Portal: {base_url}/shop/<vendor_id>")
     print("  UDP Discovery Beacon: Listening on port 8002")
     print("=" * 62 + "\n")
     udp_discovery.start()
+    cleanup_task = asyncio.create_task(_periodic_cleanup_loop())
     try:
         yield
     finally:
+        cleanup_task.cancel()
         udp_discovery.stop()
 
 
