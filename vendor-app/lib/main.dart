@@ -68,10 +68,17 @@ Future<String> loadNormalizedShopUrl(SharedPreferences prefs) async {
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
-    final title =
-        message.notification?.title ?? message.data['title'] ?? 'New Print Job';
-    final body =
-        message.notification?.body ?? message.data['body'] ?? 'New order received';
+
+    // When the app is killed or in the background, Google Play Services
+    // automatically displays the heads-up alert banner if the payload has a 'notification' object.
+    // Posting a local notification here would cause a duplicate (double) banner.
+    if (message.notification != null) {
+      debugPrint('FCM background: system already rendered notification banner.');
+      return;
+    }
+
+    final title = message.data['title'] ?? 'New Print Job';
+    final body = message.data['body'] ?? 'New order received';
     final payload = message.data['order_id'] ?? message.data['payload'];
     await NotificationService.showJobNotification(
       title: title,

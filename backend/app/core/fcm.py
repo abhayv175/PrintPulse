@@ -227,6 +227,18 @@ async def send_fcm_message(
 
     message_target = {"topic": target} if is_topic else {"token": target}
 
+    android_notification: Dict[str, Any] = {
+        "channel_id": "printpulse_urgent_jobs_v2",
+        "sound": "new_job",
+        "default_sound": False,
+        "icon": "ic_notification",
+        "notification_priority": "PRIORITY_MAX",
+        "visibility": "PUBLIC",
+    }
+    order_id = (data or {}).get("order_id")
+    if order_id:
+        android_notification["tag"] = f"order_{order_id}"
+
     message_payload = {
         "message": {
             **message_target,
@@ -237,14 +249,7 @@ async def send_fcm_message(
             "data": sanitized_data,
             "android": {
                 "priority": "HIGH",
-                "notification": {
-                    "channel_id": "printpulse_urgent_jobs_v2",
-                    "sound": "new_job",
-                    "default_sound": False,
-                    "icon": "ic_notification",
-                    "notification_priority": "PRIORITY_MAX",
-                    "visibility": "PUBLIC",
-                },
+                "notification": android_notification,
             },
         }
     }

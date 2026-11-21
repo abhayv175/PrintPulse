@@ -16,6 +16,31 @@ class NotificationService {
   static AudioPlayer? _foregroundPlayer;
   static bool _initialized = false;
   static int _notificationCounter = 1000;
+  static final Map<String, int> _recentAlertTimestamps = <String, int>{};
+
+  static int _generateNotificationId(String? payload, int? explicitId) {
+    if (explicitId != null) return explicitId;
+    if (payload != null && payload.trim().isNotEmpty) {
+      return payload.trim().hashCode.abs() % 2147483647;
+    }
+    return ++_notificationCounter;
+  }
+
+  static bool shouldDeduplicate(String? payload) {
+    if (payload == null || payload.trim().isEmpty) return false;
+    final cleanId = payload.trim();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _recentAlertTimestamps.removeWhere((_, time) => now - time > 60000);
+
+    if (_recentAlertTimestamps.containsKey(cleanId)) {
+      final lastTime = _recentAlertTimestamps[cleanId]!;
+      if (now - lastTime < 4000) {
+        return true;
+      }
+    }
+    _recentAlertTimestamps[cleanId] = now;
+    return false;
+  }
 
   static const String channelId = 'printpulse_urgent_jobs_v2';
   static const String channelName = 'PrintPulse Urgent Jobs & Payments';
@@ -187,9 +212,12 @@ class NotificationService {
         await initialize();
       }
 
-      final id = notificationId ?? ++_notificationCounter;
+      final id = _generateNotificationId(payload, notificationId);
+      final tag = (payload != null && payload.trim().isNotEmpty)
+          ? 'order_${payload.trim()}'
+          : null;
 
-      const AndroidNotificationDetails androidDetails =
+      final AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
         channelId,
         channelName,
@@ -197,13 +225,14 @@ class NotificationService {
         importance: Importance.max,
         priority: Priority.max,
         playSound: true,
-        sound: RawResourceAndroidNotificationSound('new_job'),
+        sound: const RawResourceAndroidNotificationSound('new_job'),
         enableVibration: true,
         icon: 'ic_notification',
-        largeIcon: DrawableResourceAndroidBitmap('app_icon'),
+        largeIcon: const DrawableResourceAndroidBitmap('app_icon'),
         category: AndroidNotificationCategory.event,
         visibility: NotificationVisibility.public,
         channelShowBadge: true,
+        tag: tag,
       );
 
       const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
@@ -213,7 +242,7 @@ class NotificationService {
         sound: 'new_job.mp3',
       );
 
-      const NotificationDetails platformDetails = NotificationDetails(
+      final NotificationDetails platformDetails = NotificationDetails(
         android: androidDetails,
         iOS: iosDetails,
       );
@@ -287,12 +316,18 @@ class NotificationService {
   }
 
   /// Combined helper: fires both heads-up banner and immediate foreground chime.
+  /// Automatically deduplicates event bursts for the same order across WebSocket and FCM.
   static Future<void> alertNewJob({
     required String title,
     required String body,
     String? payload,
     int? notificationId,
   }) async {
+    if (shouldDeduplicate(payload)) {
+      debugPrint('NotificationService: deduplicated burst alert for order: $payload');
+      return;
+    }
+
     await Future.wait([
       showJobNotification(
         title: title,
